@@ -1,6 +1,8 @@
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
+use crate::WorldPosition;
+
 /// 3D displacement / direction vector in i128 space.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -141,6 +143,50 @@ impl Vec3I128 {
             .checked_mul(rhs.y)?
             .checked_sub(self.y.checked_mul(rhs.x)?)?;
         Some(Vec3I128::new(x_comp, y_comp, z_comp))
+    }
+
+    /// Returns x² + y² + z².
+    ///
+    /// # Overflow
+    /// Each component squared can reach i128::MAX if the component
+    /// itself exceeds ~1.3×10¹⁹ (√(i128::MAX) ≈ 1.3×10¹⁹).
+    /// The sum of three squares overflows if any component exceeds
+    /// ~7.75×10¹⁸ (~2⁶² / √3).
+    ///
+    /// For positions within a single solar system (~10¹⁵ mm), this
+    /// is safe. For interstellar distances, use magnitude_f64().
+    pub fn magnitude_squared(self) -> i128 {
+        self.x * self.x + self.y * self.y + self.z * self.z
+    }
+
+    /// Converts to f64 and computes √(x² + y² + z²).
+    ///
+    /// Precision: f64 has 53 bits of mantissa, so values above 2⁵³
+    /// (~9×10¹⁵) lose precision. For distances up to ~9×10¹² km
+    /// this is exact to the millimeter.
+    pub fn magnitude_f64(self) -> f64 {
+        let x = self.x as f64;
+        let y = self.y as f64;
+        let z = self.z as f64;
+        (x * x + y * y + z * z).sqrt()
+    }
+
+    /// Manhattan (L1) magnitude: |x| + |y| + |z|.
+    ///
+    /// Cannot overflow unless the sum of three i128::MAX-magnitude
+    /// values is taken, which requires components near i128::MAX/3.
+    /// For all practical game distances, this is completely safe.
+    pub fn manhattan_magnitude(self) -> i128 {
+        self.x.abs() + self.y.abs() + self.z.abs()
+    }
+
+    /// Returns None if any intermediate multiplication or the
+    /// final sum overflows i128.
+    pub fn checked_magnitude_squared(self) -> Option<i128> {
+        let x2 = self.x.checked_mul(self.x)?;
+        let y2 = self.y.checked_mul(self.y)?;
+        let z2 = self.z.checked_mul(self.z)?;
+        x2.checked_add(y2)?.checked_add(z2)
     }
 }
 
@@ -374,6 +420,23 @@ impl MulAssign<i128> for Vec2I128 {
     }
 }
 
+// Free functions for distance calculations
+
+/// Squared Euclidean distance between two world positions.
+pub fn distance_squared(a: WorldPosition, b: WorldPosition) -> i128 {
+    (a - b).magnitude_squared()
+}
+
+/// Euclidean distance between two world positions, returned as f64.
+pub fn distance_f64(a: WorldPosition, b: WorldPosition) -> f64 {
+    (a - b).magnitude_f64()
+}
+
+/// Manhattan distance between two world positions.
+pub fn manhattan_distance(a: WorldPosition, b: WorldPosition) -> i128 {
+    (a - b).manhattan_magnitude()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,5 +613,87 @@ mod tests {
         let a = Vec2I128::new(1, 0);
         let b = Vec2I128::new(0, 1);
         assert_eq!(a.perp_dot(b), 1); // 1*1 - 0*0
+    }
+
+    #[test]
+    fn test_distance_to_self_is_zero() {
+        let p = WorldPosition::new(1000, 2000, 3000);
+        assert_eq!(distance_squared(p, p), 0);
+        assert_eq!(distance_f64(p, p), 0.0);
+    }
+
+    #[test]
+    fn test_distance_3_4_5_triangle() {
+        // Displacement of (3000, 4000, 0) mm -> distance = 5000 mm
+        let a = WorldPosition::new(0, 0, 0);
+        let b = WorldPosition::new(3000, 4000, 0);
+        assert_eq!(distance_squared(a, b), 25_000_000);
+        assert!((distance_f64(a, b) - 5000.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_distance_symmetric() {
+        let a = WorldPosition::new(10, 20, 30);
+        let b = WorldPosition::new(40, 50, 60);
+        assert_eq!(distance_squared(a, b), distance_squared(b, a));
+        assert_eq!(distance_f64(a, b), distance_f64(b, a));
+    }
+
+    #[test]
+    fn test_manhattan_distance() {
+        let a = WorldPosition::new(0, 0, 0);
+        let b = WorldPosition::new(3, 4, 5);
+        assert_eq!(manhattan_distance(a, b), 12);
+    }
+
+    #[test]
+    fn test_manhattan_distance_with_negatives() {
+        let a = WorldPosition::new(10, 10, 10);
+        let b = WorldPosition::new(7, 14, 10);
+        // |3| + |-4| + |0| = 7
+        assert_eq!(manhattan_distance(a, b), 7);
+    }
+
+    #[test]
+    fn test_squared_distance_manual_calc() {
+        let a = WorldPosition::new(1, 2, 3);
+        let b = WorldPosition::new(4, 6, 8);
+        // (3² + 4² + 5²) = 9 + 16 + 25 = 50
+        assert_eq!(distance_squared(a, b), 50);
+    }
+
+    #[test]
+    fn test_magnitude_squared() {
+        let v = Vec3I128::new(3, 4, 0);
+        assert_eq!(v.magnitude_squared(), 25);
+    }
+
+    #[test]
+    fn test_magnitude_f64() {
+        let v = Vec3I128::new(3, 4, 0);
+        assert!((v.magnitude_f64() - 5.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_checked_magnitude_squared_safe() {
+        let v = Vec3I128::new(1000, 2000, 3000);
+        assert_eq!(v.checked_magnitude_squared(), Some(14_000_000));
+    }
+
+    #[test]
+    fn test_checked_magnitude_squared_overflow() {
+        let v = Vec3I128::new(i128::MAX, 0, 0);
+        assert!(v.checked_magnitude_squared().is_none());
+    }
+
+    #[test]
+    fn test_large_coordinates_f64_distance() {
+        // Two points 1 AU apart along x-axis
+        // 1 AU ≈ 1.496×10¹¹ m = 1.496×10¹⁴ mm
+        let au_mm: i128 = 149_597_870_700_000;
+        let a = WorldPosition::new(0, 0, 0);
+        let b = WorldPosition::new(au_mm, 0, 0);
+        let d = distance_f64(a, b);
+        assert!((d - au_mm as f64).abs() / (au_mm as f64) < 1e-10);
     }
 }
