@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use crate::game_loop::{FIXED_DT, GameLoop};
 use nebula_render::gpu::{self, GpuContext};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -25,6 +26,11 @@ pub fn default_window_attributes() -> WindowAttributes {
         .with_inner_size(winit::dpi::LogicalSize::new(DEFAULT_WIDTH, DEFAULT_HEIGHT))
 }
 
+/// Callback invoked each fixed-rate simulation step.
+pub type UpdateFn = Box<dyn FnMut(f64, f64)>;
+/// Callback invoked to compute the clear color for rendering.
+pub type ClearColorFn = Box<dyn FnMut(u64) -> wgpu::Color>;
+
 /// Application state that manages the window, GPU context, and tracks surface dimensions.
 pub struct AppState {
     /// The window handle, wrapped in `Arc` for sharing with the renderer.
@@ -35,6 +41,12 @@ pub struct AppState {
     pub surface_width: u32,
     /// Current surface height in physical pixels.
     pub surface_height: u32,
+    /// Fixed-timestep game loop.
+    pub game_loop: GameLoop,
+    /// Simulation tick counter (incremented each fixed update).
+    pub tick_count: u64,
+    /// Optional callback to compute clear color from tick count.
+    pub clear_color_fn: Option<ClearColorFn>,
 }
 
 impl AppState {
@@ -45,6 +57,9 @@ impl AppState {
             gpu: None,
             surface_width: DEFAULT_WIDTH as u32,
             surface_height: DEFAULT_HEIGHT as u32,
+            game_loop: GameLoop::new(),
+            tick_count: 0,
+            clear_color_fn: None,
         }
     }
 
@@ -115,7 +130,21 @@ impl ApplicationHandler for AppState {
                 log::info!("Scale factor changed");
             }
             WindowEvent::RedrawRequested => {
+                let tick_count = &mut self.tick_count;
+                self.game_loop.tick(
+                    |_dt, _sim_time| {
+                        *tick_count += 1;
+                    },
+                    |_alpha| {},
+                );
+
                 if let Some(gpu) = &self.gpu {
+                    let clear_color = if let Some(ref mut f) = self.clear_color_fn {
+                        f(self.tick_count)
+                    } else {
+                        default_clear_color(self.tick_count)
+                    };
+
                     match gpu.surface.get_current_texture() {
                         Ok(output) => {
                             let view = output
@@ -126,19 +155,13 @@ impl ApplicationHandler for AppState {
                                     label: Some("Clear Encoder"),
                                 },
                             );
-                            // Deep space blue clear
                             encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                 label: Some("Clear Pass"),
                                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                     view: &view,
                                     resolve_target: None,
                                     ops: wgpu::Operations {
-                                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                                            r: 0.02,
-                                            g: 0.02,
-                                            b: 0.08,
-                                            a: 1.0,
-                                        }),
+                                        load: wgpu::LoadOp::Clear(clear_color),
                                         store: wgpu::StoreOp::Store,
                                     },
                                     depth_slice: None,
@@ -173,6 +196,21 @@ impl ApplicationHandler for AppState {
             }
             _ => {}
         }
+    }
+}
+
+/// Computes a pulsing deep-space blue clear color based on the tick count.
+///
+/// The blue channel oscillates between 0.02 and 0.08, proving the simulation
+/// loop is alive.
+pub fn default_clear_color(tick_count: u64) -> wgpu::Color {
+    let phase = (tick_count as f64 * FIXED_DT * std::f64::consts::TAU * 0.25).sin();
+    let blue = 0.05 + 0.03 * phase;
+    wgpu::Color {
+        r: 0.02,
+        g: 0.02,
+        b: blue,
+        a: 1.0,
     }
 }
 
