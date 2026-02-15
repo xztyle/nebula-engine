@@ -97,7 +97,8 @@ Performance is not a phase -- it's a constraint on every phase.
 - One commit per completed story (squash if needed)
 - Format: `feat(phase/story): short description`
 - Example: `feat(01_setup/04): spawn window with winit`
-- Push after each story is validated
+- **Commit AND push after each story is validated** -- no local-only commits
+- `git add -A && git commit -m "..." && git push` every time
 
 ### Testing
 
