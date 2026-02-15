@@ -1,0 +1,5 @@
+[package]
+name = "nebula-animation"
+edition.workspace = true
+version.workspace = true
+license.workspace = true

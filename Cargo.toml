@@ -1,6 +1,41 @@
-[package]
-name = "nebula-app"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "2"
+members = [
+    "crates/nebula-app",
+    "crates/nebula-server",
+    "crates/nebula-demo",
+    "crates/nebula-math",
+    "crates/nebula-coords",
+    "crates/nebula-render",
+    "crates/nebula-cubesphere",
+    "crates/nebula-voxel",
+    "crates/nebula-mesh",
+    "crates/nebula-ecs",
+    "crates/nebula-terrain",
+    "crates/nebula-lod",
+    "crates/nebula-planet",
+    "crates/nebula-space",
+    "crates/nebula-lighting",
+    "crates/nebula-materials",
+    "crates/nebula-input",
+    "crates/nebula-player",
+    "crates/nebula-physics",
+    "crates/nebula-net",
+    "crates/nebula-multiplayer",
+    "crates/nebula-audio",
+    "crates/nebula-assets",
+    "crates/nebula-ui",
+    "crates/nebula-particles",
+    "crates/nebula-animation",
+    "crates/nebula-scripting",
+    "crates/nebula-scene",
+    "crates/nebula-editor",
+    "crates/nebula-debug",
+]
 
-[dependencies]
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]

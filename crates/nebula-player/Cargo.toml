@@ -1,0 +1,5 @@
+[package]
+name = "nebula-player"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
