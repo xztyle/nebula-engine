@@ -3,3 +3,6 @@ name = "nebula-app"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+
+[dependencies]
+dirs = { workspace = true }
