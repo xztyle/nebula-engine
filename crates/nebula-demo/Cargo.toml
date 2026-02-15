@@ -5,4 +5,5 @@ version.workspace = true
 license.workspace = true
 
 [dependencies]
+env_logger = "0.11"
 nebula-app = { path = "../nebula-app" }

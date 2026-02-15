@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use nebula_render::gpu::{self, GpuContext};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -24,10 +25,12 @@ pub fn default_window_attributes() -> WindowAttributes {
         .with_inner_size(winit::dpi::LogicalSize::new(DEFAULT_WIDTH, DEFAULT_HEIGHT))
 }
 
-/// Application state that manages the window and tracks surface dimensions.
+/// Application state that manages the window, GPU context, and tracks surface dimensions.
 pub struct AppState {
     /// The window handle, wrapped in `Arc` for sharing with the renderer.
     pub window: Option<Arc<Window>>,
+    /// GPU context owning device, queue, and surface.
+    pub gpu: Option<GpuContext>,
     /// Current surface width in physical pixels.
     pub surface_width: u32,
     /// Current surface height in physical pixels.
@@ -39,6 +42,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             window: None,
+            gpu: None,
             surface_width: DEFAULT_WIDTH as u32,
             surface_height: DEFAULT_HEIGHT as u32,
         }
@@ -71,7 +75,20 @@ impl ApplicationHandler for AppState {
             let window = event_loop
                 .create_window(attrs)
                 .expect("Failed to create window");
-            self.window = Some(Arc::new(window));
+            let window = Arc::new(window);
+
+            match gpu::init_gpu_blocking(window.clone()) {
+                Ok(ctx) => {
+                    self.gpu = Some(ctx);
+                }
+                Err(e) => {
+                    log::error!("GPU initialization failed: {e}");
+                    event_loop.exit();
+                    return;
+                }
+            }
+
+            self.window = Some(window);
         }
     }
 
@@ -89,12 +106,67 @@ impl ApplicationHandler for AppState {
             WindowEvent::Resized(new_size) => {
                 self.surface_width = new_size.width;
                 self.surface_height = new_size.height;
+                if let Some(gpu) = &mut self.gpu {
+                    gpu.resize(new_size.width, new_size.height);
+                }
                 log::info!("Window resized to {}x{}", new_size.width, new_size.height);
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 log::info!("Scale factor changed");
             }
             WindowEvent::RedrawRequested => {
+                if let Some(gpu) = &self.gpu {
+                    match gpu.surface.get_current_texture() {
+                        Ok(output) => {
+                            let view = output
+                                .texture
+                                .create_view(&wgpu::TextureViewDescriptor::default());
+                            let mut encoder = gpu.device.create_command_encoder(
+                                &wgpu::CommandEncoderDescriptor {
+                                    label: Some("Clear Encoder"),
+                                },
+                            );
+                            // Deep space blue clear
+                            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: Some("Clear Pass"),
+                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    view: &view,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                                            r: 0.02,
+                                            g: 0.02,
+                                            b: 0.08,
+                                            a: 1.0,
+                                        }),
+                                        store: wgpu::StoreOp::Store,
+                                    },
+                                    depth_slice: None,
+                                })],
+                                depth_stencil_attachment: None,
+                                timestamp_writes: None,
+                                occlusion_query_set: None,
+                                multiview_mask: None,
+                            });
+                            gpu.queue.submit(std::iter::once(encoder.finish()));
+                            output.present();
+                        }
+                        Err(wgpu::SurfaceError::Lost) => {
+                            let w = self.surface_width;
+                            let h = self.surface_height;
+                            if let Some(gpu) = &mut self.gpu {
+                                gpu.resize(w, h);
+                            }
+                        }
+                        Err(wgpu::SurfaceError::OutOfMemory) => {
+                            log::error!("GPU out of memory");
+                            event_loop.exit();
+                        }
+                        Err(e) => {
+                            log::warn!("Surface error: {e}");
+                        }
+                    }
+                }
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }

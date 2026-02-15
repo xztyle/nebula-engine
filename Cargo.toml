@@ -41,4 +41,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 dirs = "6"
 log = "0.4"
+pollster = "0.4"
+thiserror = "2"
+wgpu = "28.0"
 winit = "0.30"

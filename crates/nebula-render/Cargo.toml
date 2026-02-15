@@ -3,3 +3,10 @@ name = "nebula-render"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+
+[dependencies]
+log = { workspace = true }
+pollster = { workspace = true }
+thiserror = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }

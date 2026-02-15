@@ -4,7 +4,7 @@
 
 | # | Phase | Stories | Status |
 |---|-------|---------|--------|
-| 01 | Setup | 8 | Not started |
+| 01 | Setup | 9 | In progress |
 | 02 | Math (i128) | 10 | Not started |
 | 03 | Coordinates | 5 | Not started |
 | 04 | Rendering | 11 | Not started |
@@ -42,7 +42,7 @@
 | 36 | Server | 6 | Not started |
 | 37 | Testing | 6 | Not started |
 
-**Total: 37 phases, 274 stories**
+**Total: 37 phases, 275 stories**
 
 ## Rules
 

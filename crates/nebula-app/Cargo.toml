@@ -7,4 +7,6 @@ license.workspace = true
 [dependencies]
 dirs = { workspace = true }
 log = { workspace = true }
+nebula-render = { path = "../nebula-render" }
+wgpu = { workspace = true }
 winit = { workspace = true }
