@@ -1,0 +1,563 @@
+# Image/Texture Loading
+
+## Problem
+
+Every visible surface in the Nebula Engine needs textures — voxel terrain uses a texture atlas, glTF models reference PBR texture maps (base color, normal, metallic-roughness, emissive, occlusion), UI elements use sprite sheets, and skyboxes use cubemap images. These images arrive in various formats (PNG, JPEG, BMP, DDS) and must be decoded into raw pixel data, configured with the correct color space (sRGB for color textures, linear for data textures like normal maps), optionally resized for GPU compatibility, have mipmaps generated, and then uploaded to the GPU as `wgpu::Texture` resources.
+
+Getting the color space wrong means physically-based lighting produces incorrect results — an sRGB normal map would cause bizarre shading artifacts. Missing mipmaps cause shimmering (moire patterns) on surfaces viewed at oblique angles or at a distance, which is especially visible on large voxel terrain faces. Textures with non-power-of-two dimensions may cause issues on certain GPU backends. The engine needs a robust pipeline from file bytes to GPU-resident texture with all of these concerns handled correctly.
+
+## Solution
+
+### ImageLoader
+
+The `ImageLoader` implements `AssetLoader<CpuTexture>`, decoding image bytes into a CPU-side representation:
+
+```rust
+use image::{DynamicImage, GenericImageView, ImageFormat};
+use std::path::Path;
+
+pub struct ImageLoader {
+    /// Force sRGB interpretation of the loaded image.
+    /// Set to false for normal maps and other linear-space data.
+    pub srgb: bool,
+    /// Generate mipmaps after loading.
+    pub generate_mipmaps: bool,
+    /// Resize to the nearest power-of-two if needed.
+    pub force_pot: bool,
+}
+
+impl ImageLoader {
+    pub fn color_texture() -> Self {
+        Self {
+            srgb: true,
+            generate_mipmaps: true,
+            force_pot: false,
+        }
+    }
+
+    pub fn normal_map() -> Self {
+        Self {
+            srgb: false,
+            generate_mipmaps: true,
+            force_pot: false,
+        }
+    }
+
+    pub fn data_texture() -> Self {
+        Self {
+            srgb: false,
+            generate_mipmaps: false,
+            force_pot: false,
+        }
+    }
+}
+
+impl AssetLoader<CpuTexture> for ImageLoader {
+    fn load(
+        &self,
+        bytes: &[u8],
+        path: &Path,
+    ) -> Result<CpuTexture, AssetLoadError> {
+        let format = ImageFormat::from_path(path).unwrap_or(ImageFormat::Png);
+
+        let img = image::load_from_memory_with_format(bytes, format)
+            .map_err(|e| AssetLoadError::DecodeFailed {
+                path: path.to_path_buf(),
+                reason: format!("image decode error: {e}"),
+            })?;
+
+        let (width, height) = img.dimensions();
+
+        // Resize to power-of-two if requested
+        let img = if self.force_pot {
+            let pot_w = width.next_power_of_two();
+            let pot_h = height.next_power_of_two();
+            if pot_w != width || pot_h != height {
+                log::debug!(
+                    "Resizing {}x{} to {}x{} (power-of-two)",
+                    width, height, pot_w, pot_h
+                );
+                img.resize_exact(pot_w, pot_h, image::imageops::FilterType::Lanczos3)
+            } else {
+                img
+            }
+        } else {
+            img
+        };
+
+        let (width, height) = img.dimensions();
+
+        // Convert to RGBA8
+        let rgba = img.to_rgba8();
+        let pixels = rgba.into_raw();
+
+        // Generate mipmap chain
+        let mip_levels = if self.generate_mipmaps {
+            generate_mip_chain(&pixels, width, height)
+        } else {
+            vec![MipLevel {
+                data: pixels,
+                width,
+                height,
+            }]
+        };
+
+        let color_space = if self.srgb {
+            ColorSpace::Srgb
+        } else {
+            ColorSpace::Linear
+        };
+
+        Ok(CpuTexture {
+            width,
+            height,
+            color_space,
+            mip_levels,
+            has_alpha: has_meaningful_alpha(&mip_levels[0].data),
+        })
+    }
+}
+```
+
+### CPU Texture Type
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorSpace {
+    /// sRGB color space — used for base color, emissive, and UI textures.
+    /// wgpu will use an Srgb texture format (e.g., Rgba8UnormSrgb).
+    Srgb,
+    /// Linear color space — used for normal maps, metallic-roughness,
+    /// occlusion, heightmaps, and other data textures.
+    /// wgpu will use a non-sRGB format (e.g., Rgba8Unorm).
+    Linear,
+}
+
+pub struct MipLevel {
+    pub data: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+pub struct CpuTexture {
+    pub width: u32,
+    pub height: u32,
+    pub color_space: ColorSpace,
+    pub mip_levels: Vec<MipLevel>,
+    pub has_alpha: bool,
+}
+```
+
+### Mipmap Generation
+
+Mipmaps are generated by iteratively halving the resolution using a box filter (averaging 2x2 pixel blocks). Each level is half the width and half the height of the previous:
+
+```rust
+fn generate_mip_chain(
+    base_pixels: &[u8],
+    base_width: u32,
+    base_height: u32,
+) -> Vec<MipLevel> {
+    let max_levels = (base_width.max(base_height) as f32).log2().floor() as u32 + 1;
+    let mut levels = Vec::with_capacity(max_levels as usize);
+
+    levels.push(MipLevel {
+        data: base_pixels.to_vec(),
+        width: base_width,
+        height: base_height,
+    });
+
+    let mut prev_width = base_width;
+    let mut prev_height = base_height;
+    let mut prev_data = base_pixels.to_vec();
+
+    while prev_width > 1 || prev_height > 1 {
+        let new_width = (prev_width / 2).max(1);
+        let new_height = (prev_height / 2).max(1);
+        let mut new_data = vec![0u8; (new_width * new_height * 4) as usize];
+
+        for y in 0..new_height {
+            for x in 0..new_width {
+                let src_x = (x * 2).min(prev_width - 1);
+                let src_y = (y * 2).min(prev_height - 1);
+
+                // Average 2x2 block (clamped at edges)
+                let mut r = 0u32;
+                let mut g = 0u32;
+                let mut b = 0u32;
+                let mut a = 0u32;
+                let mut count = 0u32;
+
+                for dy in 0..2u32 {
+                    for dx in 0..2u32 {
+                        let sx = (src_x + dx).min(prev_width - 1);
+                        let sy = (src_y + dy).min(prev_height - 1);
+                        let idx = ((sy * prev_width + sx) * 4) as usize;
+                        r += prev_data[idx] as u32;
+                        g += prev_data[idx + 1] as u32;
+                        b += prev_data[idx + 2] as u32;
+                        a += prev_data[idx + 3] as u32;
+                        count += 1;
+                    }
+                }
+
+                let dst_idx = ((y * new_width + x) * 4) as usize;
+                new_data[dst_idx] = (r / count) as u8;
+                new_data[dst_idx + 1] = (g / count) as u8;
+                new_data[dst_idx + 2] = (b / count) as u8;
+                new_data[dst_idx + 3] = (a / count) as u8;
+            }
+        }
+
+        levels.push(MipLevel {
+            data: new_data.clone(),
+            width: new_width,
+            height: new_height,
+        });
+
+        prev_data = new_data;
+        prev_width = new_width;
+        prev_height = new_height;
+    }
+
+    levels
+}
+```
+
+### Alpha Detection
+
+Textures with meaningful alpha (not all 255) need to be rendered with alpha blending or alpha testing, which affects pipeline state:
+
+```rust
+fn has_meaningful_alpha(rgba_data: &[u8]) -> bool {
+    rgba_data.chunks_exact(4).any(|pixel| pixel[3] < 255)
+}
+```
+
+### GPU Upload
+
+After the `CpuTexture` arrives on the main thread, the GPU upload system creates the wgpu texture:
+
+```rust
+pub fn upload_texture_to_gpu(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    cpu_tex: &CpuTexture,
+) -> GpuTexture {
+    let format = match cpu_tex.color_space {
+        ColorSpace::Srgb => wgpu::TextureFormat::Rgba8UnormSrgb,
+        ColorSpace::Linear => wgpu::TextureFormat::Rgba8Unorm,
+    };
+
+    let size = wgpu::Extent3d {
+        width: cpu_tex.width,
+        height: cpu_tex.height,
+        depth_or_array_layers: 1,
+    };
+
+    let mip_level_count = cpu_tex.mip_levels.len() as u32;
+
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("loaded_texture"),
+        size,
+        mip_level_count,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    // Upload each mip level
+    for (level, mip) in cpu_tex.mip_levels.iter().enumerate() {
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &mip.data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * mip.width),
+                rows_per_image: Some(mip.height),
+            },
+            wgpu::Extent3d {
+                width: mip.width,
+                height: mip.height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("texture_sampler"),
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        address_mode_w: wgpu::AddressMode::Repeat,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+
+    GpuTexture {
+        texture,
+        view,
+        sampler,
+        width: cpu_tex.width,
+        height: cpu_tex.height,
+        format,
+    }
+}
+
+pub struct GpuTexture {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+    pub sampler: wgpu::Sampler,
+    pub width: u32,
+    pub height: u32,
+    pub format: wgpu::TextureFormat,
+}
+```
+
+## Outcome
+
+An `ImageLoader` that decodes PNG, JPEG, BMP, and other image formats via the `image` crate into a `CpuTexture` with correct color space annotation, a full mipmap chain, alpha detection, and optional power-of-two resizing. The `upload_texture_to_gpu` function creates the wgpu `Texture`, `TextureView`, and `Sampler` with the appropriate format (`Rgba8UnormSrgb` for sRGB, `Rgba8Unorm` for linear). All mip levels are uploaded. The result is a `GpuTexture` ready to be bound in shader bind groups. Factory constructors (`color_texture()`, `normal_map()`, `data_texture()`) configure the loader for common use cases.
+
+## Demo Integration
+
+**Demo crate:** `nebula-demo`
+
+PNG textures are loaded for the voxel atlas and UI. Format conversion and mipmap generation happen automatically.
+
+## Crates & Dependencies
+
+| Crate | Version | Purpose |
+|-------|---------|---------|
+| `image` | `0.25` | Decode PNG, JPEG, BMP, GIF, TIFF, and other image formats |
+| `wgpu` | `24.0` | Create GPU textures, texture views, and samplers |
+| `log` | `0.4` | Logging format detection, resize events, and upload progress |
+| `thiserror` | `2.0` | Error type derivation |
+
+Rust edition 2024. DDS/KTX2 compressed texture support (BC7, ASTC) is deferred to a future story — this story covers uncompressed image loading. The `image` crate handles all supported formats without additional codec dependencies.
+
+## Unit Tests
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    /// Create a minimal valid PNG in memory (1x1 red pixel).
+    fn red_pixel_png() -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut encoder = image::codecs::png::PngEncoder::new(&mut buf);
+            use image::ImageEncoder;
+            // 1x1 RGBA red pixel
+            encoder
+                .write_image(&[255, 0, 0, 255], 1, 1, image::ExtendedColorType::Rgba8)
+                .unwrap();
+        }
+        buf
+    }
+
+    /// Create a minimal valid JPEG in memory (2x2 white pixels).
+    fn white_jpeg() -> Vec<u8> {
+        let img = image::RgbImage::from_pixel(2, 2, image::Rgb([255, 255, 255]));
+        let mut buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut buf, image::ImageFormat::Jpeg).unwrap();
+        buf.into_inner()
+    }
+
+    /// Create a 4x4 RGBA image with varying alpha.
+    fn alpha_test_png() -> Vec<u8> {
+        let mut img = image::RgbaImage::new(4, 4);
+        for (x, y, pixel) in img.enumerate_pixels_mut() {
+            *pixel = image::Rgba([
+                (x * 64) as u8,
+                (y * 64) as u8,
+                128,
+                if x == 0 && y == 0 { 0 } else { 255 },
+            ]);
+        }
+        let mut buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        buf.into_inner()
+    }
+
+    #[test]
+    fn test_png_loads_correctly() {
+        let loader = ImageLoader::color_texture();
+        let bytes = red_pixel_png();
+        let result = loader.load(&bytes, Path::new("test.png"));
+
+        assert!(result.is_ok(), "PNG load failed: {:?}", result.err());
+        let tex = result.unwrap();
+        assert_eq!(tex.width, 1);
+        assert_eq!(tex.height, 1);
+        assert_eq!(tex.color_space, ColorSpace::Srgb);
+        // 1x1 texture has exactly 1 mip level
+        assert_eq!(tex.mip_levels.len(), 1);
+        // RGBA: first pixel is red
+        assert_eq!(&tex.mip_levels[0].data[..4], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn test_jpeg_loads_correctly() {
+        let loader = ImageLoader::color_texture();
+        let bytes = white_jpeg();
+        let result = loader.load(&bytes, Path::new("test.jpg"));
+
+        assert!(result.is_ok(), "JPEG load failed: {:?}", result.err());
+        let tex = result.unwrap();
+        assert_eq!(tex.width, 2);
+        assert_eq!(tex.height, 2);
+        // JPEG is lossy, but white should be very close to 255
+        let first_pixel = &tex.mip_levels[0].data[..4];
+        assert!(first_pixel[0] > 250, "Red channel should be near 255");
+        assert!(first_pixel[1] > 250, "Green channel should be near 255");
+        assert!(first_pixel[2] > 250, "Blue channel should be near 255");
+    }
+
+    #[test]
+    fn test_srgb_vs_linear_handled() {
+        let bytes = red_pixel_png();
+
+        let srgb_loader = ImageLoader::color_texture();
+        let srgb_tex = srgb_loader.load(&bytes, Path::new("test.png")).unwrap();
+        assert_eq!(srgb_tex.color_space, ColorSpace::Srgb);
+
+        let linear_loader = ImageLoader::normal_map();
+        let linear_tex = linear_loader.load(&bytes, Path::new("test.png")).unwrap();
+        assert_eq!(linear_tex.color_space, ColorSpace::Linear);
+    }
+
+    #[test]
+    fn test_mipmap_chain_generated() {
+        // Create an 8x8 image — should generate mip levels:
+        // 8x8, 4x4, 2x2, 1x1 = 4 levels
+        let img = image::RgbaImage::from_pixel(
+            8, 8, image::Rgba([128, 128, 128, 255]),
+        );
+        let mut buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        let bytes = buf.into_inner();
+
+        let loader = ImageLoader::color_texture();
+        let tex = loader.load(&bytes, Path::new("mip_test.png")).unwrap();
+
+        assert_eq!(tex.mip_levels.len(), 4, "8x8 should produce 4 mip levels");
+        assert_eq!(tex.mip_levels[0].width, 8);
+        assert_eq!(tex.mip_levels[0].height, 8);
+        assert_eq!(tex.mip_levels[1].width, 4);
+        assert_eq!(tex.mip_levels[1].height, 4);
+        assert_eq!(tex.mip_levels[2].width, 2);
+        assert_eq!(tex.mip_levels[2].height, 2);
+        assert_eq!(tex.mip_levels[3].width, 1);
+        assert_eq!(tex.mip_levels[3].height, 1);
+    }
+
+    #[test]
+    fn test_no_mipmaps_when_disabled() {
+        let img = image::RgbaImage::from_pixel(
+            8, 8, image::Rgba([128, 128, 128, 255]),
+        );
+        let mut buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        let bytes = buf.into_inner();
+
+        let loader = ImageLoader::data_texture(); // mipmaps disabled
+        let tex = loader.load(&bytes, Path::new("no_mip.png")).unwrap();
+
+        assert_eq!(
+            tex.mip_levels.len(),
+            1,
+            "Data texture should have no extra mip levels"
+        );
+    }
+
+    #[test]
+    fn test_invalid_image_returns_error() {
+        let loader = ImageLoader::color_texture();
+        let garbage = b"not an image file";
+        let result = loader.load(garbage, Path::new("garbage.png"));
+
+        assert!(result.is_err(), "Invalid data should produce an error");
+        match result.unwrap_err() {
+            AssetLoadError::DecodeFailed { reason, .. } => {
+                assert!(
+                    reason.contains("image decode error"),
+                    "Error should mention decode: {reason}"
+                );
+            }
+            other => panic!("Expected DecodeFailed, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_texture_dimensions_match_source() {
+        let img = image::RgbaImage::from_pixel(
+            17, 31, image::Rgba([0, 0, 0, 255]),
+        );
+        let mut buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        let bytes = buf.into_inner();
+
+        let mut loader = ImageLoader::color_texture();
+        loader.force_pot = false;
+        let tex = loader.load(&bytes, Path::new("odd.png")).unwrap();
+
+        assert_eq!(tex.width, 17);
+        assert_eq!(tex.height, 31);
+    }
+
+    #[test]
+    fn test_force_power_of_two_resizes() {
+        let img = image::RgbaImage::from_pixel(
+            17, 31, image::Rgba([0, 0, 0, 255]),
+        );
+        let mut buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        let bytes = buf.into_inner();
+
+        let mut loader = ImageLoader::color_texture();
+        loader.force_pot = true;
+        let tex = loader.load(&bytes, Path::new("pot_resize.png")).unwrap();
+
+        assert_eq!(tex.width, 32, "17 should round up to 32");
+        assert_eq!(tex.height, 32, "31 should round up to 32");
+        assert!(tex.width.is_power_of_two());
+        assert!(tex.height.is_power_of_two());
+    }
+
+    #[test]
+    fn test_alpha_detection() {
+        let bytes = alpha_test_png();
+        let loader = ImageLoader::color_texture();
+        let tex = loader.load(&bytes, Path::new("alpha.png")).unwrap();
+
+        assert!(
+            tex.has_alpha,
+            "Image with a transparent pixel should report has_alpha=true"
+        );
+    }
+
+    #[test]
+    fn test_opaque_image_no_alpha() {
+        let bytes = red_pixel_png();
+        let loader = ImageLoader::color_texture();
+        let tex = loader.load(&bytes, Path::new("opaque.png")).unwrap();
+
+        assert!(
+            !tex.has_alpha,
+            "Fully opaque image should report has_alpha=false"
+        );
+    }
+}
+```
