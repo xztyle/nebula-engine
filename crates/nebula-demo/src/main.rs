@@ -1,5 +1,7 @@
-//! Demo binary that validates the Nebula Engine workspace compiles correctly.
+//! Demo binary that opens a Nebula Engine window.
+//!
+//! Run with `cargo run -p nebula-demo` to see the window.
 
 fn main() {
-    println!("Nebula Engine Demo");
+    nebula_app::window::run();
 }

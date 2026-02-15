@@ -3,3 +3,6 @@ name = "nebula-demo"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+
+[dependencies]
+nebula-app = { path = "../nebula-app" }
