@@ -150,15 +150,15 @@ mod tests {
         ];
 
         for filter_str in &valid_filters {
-            let result = EnvFilter::try_from(*filter_str);
+            let result = EnvFilter::try_new(*filter_str);
             assert!(result.is_ok(), "Failed to parse filter: {}", filter_str);
         }
 
         // Note: EnvFilter is quite forgiving and will parse almost anything,
         // just ignoring invalid parts. This is actually the correct behavior.
-        // So we just test that try_from doesn't panic on weird input.
-        let _result = EnvFilter::try_from("weird=input=with=equals");
-        assert!(true); // If we get here without panicking, the parsing is robust
+        // So we just test that try_new doesn't panic on weird input.
+        let _result = EnvFilter::try_new("weird=input=with=equals");
+        // If we get here without panicking, the parsing is robust
     }
 
     #[test]

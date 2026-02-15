@@ -15,7 +15,7 @@ Nebula Engine is an AI-friendly voxel game engine written in Rust. Built to powe
 
 - Rust edition 2024, toolchain 1.93+
 - `cargo fmt` before every commit
-- `cargo clippy -- -D warnings` must pass
+- `cargo clippy --workspace --all-targets -- -D warnings` must pass (always use `--all-targets` to match CI)
 - No `unwrap()` in library code -- use `Result`/`Option` properly
 - `unwrap()` acceptable in tests and demo code only
 - Max 500 lines per file. Split if exceeded.
