@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use crate::game_loop::{FIXED_DT, GameLoop};
+use nebula_config::Config;
 use nebula_render::gpu::{self, GpuContext};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -18,6 +19,16 @@ pub const DEFAULT_WIDTH: f64 = 1280.0;
 pub const DEFAULT_HEIGHT: f64 = 720.0;
 /// Default window title.
 pub const DEFAULT_TITLE: &str = "Nebula Engine";
+
+/// Returns [`WindowAttributes`] based on the given configuration.
+pub fn window_attributes_from_config(config: &Config) -> WindowAttributes {
+    WindowAttributes::default()
+        .with_title(config.window.title.clone())
+        .with_inner_size(winit::dpi::LogicalSize::new(
+            config.window.width as f64,
+            config.window.height as f64,
+        ))
+}
 
 /// Returns the default [`WindowAttributes`] for the engine window.
 pub fn default_window_attributes() -> WindowAttributes {
@@ -47,6 +58,8 @@ pub struct AppState {
     pub tick_count: u64,
     /// Optional callback to compute clear color from tick count.
     pub clear_color_fn: Option<ClearColorFn>,
+    /// Engine configuration.
+    pub config: Config,
 }
 
 impl AppState {
@@ -60,6 +73,21 @@ impl AppState {
             game_loop: GameLoop::new(),
             tick_count: 0,
             clear_color_fn: None,
+            config: Config::default(),
+        }
+    }
+
+    /// Creates a new `AppState` from a [`Config`].
+    pub fn with_config(config: Config) -> Self {
+        Self {
+            window: None,
+            gpu: None,
+            surface_width: config.window.width,
+            surface_height: config.window.height,
+            game_loop: GameLoop::new(),
+            tick_count: 0,
+            clear_color_fn: None,
+            config,
         }
     }
 
@@ -86,7 +114,7 @@ impl Default for AppState {
 impl ApplicationHandler for AppState {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
-            let attrs = default_window_attributes();
+            let attrs = window_attributes_from_config(&self.config);
             let window = event_loop
                 .create_window(attrs)
                 .expect("Failed to create window");
@@ -214,12 +242,21 @@ pub fn default_clear_color(tick_count: u64) -> wgpu::Color {
     }
 }
 
-/// Creates an event loop and runs the application.
+/// Creates an event loop and runs the application with default config.
 ///
 /// This function blocks until the window is closed.
 pub fn run() {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut app = AppState::new();
+    event_loop.run_app(&mut app).expect("Event loop failed");
+}
+
+/// Creates an event loop and runs the application with the given config.
+///
+/// This function blocks until the window is closed.
+pub fn run_with_config(config: Config) {
+    let event_loop = EventLoop::new().expect("Failed to create event loop");
+    let mut app = AppState::with_config(config);
     event_loop.run_app(&mut app).expect("Event loop failed");
 }
 

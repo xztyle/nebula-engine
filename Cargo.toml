@@ -31,6 +31,7 @@ members = [
     "crates/nebula-scene",
     "crates/nebula-editor",
     "crates/nebula-debug",
+    "crates/nebula-config",
 ]
 
 [workspace.package]

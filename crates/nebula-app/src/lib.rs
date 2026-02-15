@@ -4,3 +4,5 @@
 
 pub mod game_loop;
 pub mod window;
+
+pub use nebula_config;
