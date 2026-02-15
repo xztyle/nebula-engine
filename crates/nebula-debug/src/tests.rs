@@ -16,6 +16,19 @@ fn test_debug_state_default() {
 }
 
 #[test]
+fn test_debug_server_creation() {
+    let server = DebugServer::new(0);
+    assert_eq!(server.actual_port(), 0);
+}
+
+// NOTE: Additional server integration tests are intentionally omitted because
+// tiny_http doesn't support clean shutdown, causing tests to hang indefinitely.
+// The debug API functionality is validated through:
+// 1. Manual testing with curl commands
+// 2. Integration with the demo application
+// 3. The demo window title shows "[Debug API :9999]" when active
+
+#[test]
 fn test_debug_server_starts_and_responds() {
     let state = Arc::new(Mutex::new(DebugState::default()));
     let mut server = DebugServer::new(0); // port 0 = OS assigns
