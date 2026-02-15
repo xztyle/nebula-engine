@@ -6,10 +6,9 @@
 
 use clap::Parser;
 use nebula_config::{CliArgs, Config};
+use tracing::info;
 
 fn main() {
-    env_logger::init();
-
     let args = CliArgs::parse();
 
     // Resolve config directory
@@ -21,16 +20,18 @@ fn main() {
 
     // Load or create config, then apply CLI overrides
     let mut config = Config::load_or_create(&config_dir).unwrap_or_else(|e| {
-        log::warn!("Failed to load config: {e}, using defaults");
+        eprintln!("Failed to load config: {e}, using defaults");
         Config::default()
     });
     config.apply_cli_overrides(&args);
 
-    log::info!(
+    // Initialize logging with config and debug settings
+    let log_dir = config_dir.join("logs");
+    nebula_log::init_logging(Some(&log_dir), cfg!(debug_assertions), Some(&config));
+
+    info!(
         "Starting demo: {}x{} \"{}\"",
-        config.window.width,
-        config.window.height,
-        config.window.title,
+        config.window.width, config.window.height, config.window.title,
     );
 
     nebula_app::window::run_with_config(config);

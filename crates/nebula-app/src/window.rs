@@ -3,11 +3,14 @@
 //! Provides [`AppState`] which implements winit's [`ApplicationHandler`] trait,
 //! and a [`run`] function to start the event loop.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::game_loop::{FIXED_DT, GameLoop};
 use nebula_config::Config;
+use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
 use nebula_render::gpu::{self, GpuContext};
+use tracing::{error, info, instrument, warn};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -60,11 +63,23 @@ pub struct AppState {
     pub clear_color_fn: Option<ClearColorFn>,
     /// Engine configuration.
     pub config: Config,
+    /// Debug server (only in debug builds).
+    pub debug_server: Option<DebugServer>,
+    /// Debug state shared with the server.
+    pub debug_state: Arc<Mutex<DebugState>>,
+    /// Application start time for uptime calculation.
+    pub start_time: Instant,
+    /// Previous frame time for FPS calculation.
+    pub last_frame_time: Instant,
 }
 
 impl AppState {
     /// Creates a new `AppState` with default dimensions and no window.
     pub fn new() -> Self {
+        let debug_state = Arc::new(Mutex::new(DebugState::default()));
+        let debug_server = create_debug_server(get_debug_port());
+        let now = Instant::now();
+
         Self {
             window: None,
             gpu: None,
@@ -74,11 +89,26 @@ impl AppState {
             tick_count: 0,
             clear_color_fn: None,
             config: Config::default(),
+            debug_server,
+            debug_state,
+            start_time: now,
+            last_frame_time: now,
         }
     }
 
     /// Creates a new `AppState` from a [`Config`].
-    pub fn with_config(config: Config) -> Self {
+    pub fn with_config(mut config: Config) -> Self {
+        let debug_state = Arc::new(Mutex::new(DebugState::default()));
+        let debug_server = create_debug_server(get_debug_port());
+        let now = Instant::now();
+
+        // Update window title to include debug port in debug builds
+        #[cfg(debug_assertions)]
+        {
+            config.window.title =
+                format!("{} [Debug API :{}]", config.window.title, get_debug_port());
+        }
+
         Self {
             window: None,
             gpu: None,
@@ -88,6 +118,10 @@ impl AppState {
             tick_count: 0,
             clear_color_fn: None,
             config,
+            debug_server,
+            debug_state,
+            start_time: now,
+            last_frame_time: now,
         }
     }
 
@@ -102,6 +136,38 @@ impl AppState {
             self.surface_width as f64 / scale,
             self.surface_height as f64 / scale,
         )
+    }
+
+    /// Updates the debug state with current frame metrics.
+    pub fn update_debug_state(&mut self) {
+        let now = Instant::now();
+        let frame_time_ms = now.duration_since(self.last_frame_time).as_secs_f64() * 1000.0;
+        let fps = if frame_time_ms > 0.0 {
+            1000.0 / frame_time_ms
+        } else {
+            0.0
+        };
+        let uptime_seconds = now.duration_since(self.start_time).as_secs_f64();
+
+        if let Ok(mut state) = self.debug_state.lock() {
+            state.frame_count = self.game_loop.frame_count();
+            state.frame_time_ms = frame_time_ms;
+            state.fps = fps;
+            state.entity_count = 0; // Will be updated once ECS is implemented
+            state.window_width = self.surface_width;
+            state.window_height = self.surface_height;
+            state.uptime_seconds = uptime_seconds;
+        }
+
+        self.last_frame_time = now;
+    }
+
+    /// Checks if quit was requested via the debug API.
+    pub fn should_quit_from_debug(&self) -> bool {
+        self.debug_state
+            .lock()
+            .map(|state| state.quit_requested)
+            .unwrap_or(false)
     }
 }
 
@@ -125,13 +191,23 @@ impl ApplicationHandler for AppState {
                     self.gpu = Some(ctx);
                 }
                 Err(e) => {
-                    log::error!("GPU initialization failed: {e}");
+                    error!("GPU initialization failed: {e}");
                     event_loop.exit();
                     return;
                 }
             }
 
             self.window = Some(window);
+
+            // Start debug server in debug builds
+            #[cfg(debug_assertions)]
+            if let Some(ref mut debug_server) = self.debug_server {
+                if let Err(e) = debug_server.start(self.debug_state.clone()) {
+                    warn!("Failed to start debug server: {e}");
+                } else {
+                    info!("Debug API started on port {}", debug_server.actual_port());
+                }
+            }
         }
     }
 
@@ -143,7 +219,7 @@ impl ApplicationHandler for AppState {
     ) {
         match event {
             WindowEvent::CloseRequested => {
-                log::info!("Close requested, shutting down");
+                info!("Close requested, shutting down");
                 event_loop.exit();
             }
             WindowEvent::Resized(new_size) => {
@@ -152,12 +228,22 @@ impl ApplicationHandler for AppState {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(new_size.width, new_size.height);
                 }
-                log::info!("Window resized to {}x{}", new_size.width, new_size.height);
+                info!("Window resized to {}x{}", new_size.width, new_size.height);
             }
             WindowEvent::ScaleFactorChanged { .. } => {
-                log::info!("Scale factor changed");
+                info!("Scale factor changed");
             }
             WindowEvent::RedrawRequested => {
+                // Update debug state first
+                self.update_debug_state();
+
+                // Check if quit was requested via debug API
+                if self.should_quit_from_debug() {
+                    info!("Quit requested via debug API");
+                    event_loop.exit();
+                    return;
+                }
+
                 let tick_count = &mut self.tick_count;
                 self.game_loop.tick(
                     |_dt, _sim_time| {
@@ -210,11 +296,11 @@ impl ApplicationHandler for AppState {
                             }
                         }
                         Err(wgpu::SurfaceError::OutOfMemory) => {
-                            log::error!("GPU out of memory");
+                            error!("GPU out of memory");
                             event_loop.exit();
                         }
                         Err(e) => {
-                            log::warn!("Surface error: {e}");
+                            warn!("Surface error: {e}");
                         }
                     }
                 }
@@ -245,6 +331,7 @@ pub fn default_clear_color(tick_count: u64) -> wgpu::Color {
 /// Creates an event loop and runs the application with default config.
 ///
 /// This function blocks until the window is closed.
+#[instrument]
 pub fn run() {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut app = AppState::new();
@@ -254,6 +341,7 @@ pub fn run() {
 /// Creates an event loop and runs the application with the given config.
 ///
 /// This function blocks until the window is closed.
+#[instrument(skip(config))]
 pub fn run_with_config(config: Config) {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut app = AppState::with_config(config);

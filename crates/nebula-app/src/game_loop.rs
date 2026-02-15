@@ -5,6 +5,7 @@
 //! simulation states.
 
 use std::time::Instant;
+use tracing::warn;
 
 /// Fixed simulation timestep: 60 Hz (16.666… ms per tick).
 pub const FIXED_DT: f64 = 1.0 / 60.0;
@@ -54,7 +55,7 @@ impl GameLoop {
 
         // Clamp frame time to prevent spiral of death
         if frame_time > MAX_FRAME_TIME {
-            log::warn!(
+            warn!(
                 "Frame time {:.1}ms exceeds maximum, clamping to {:.1}ms",
                 frame_time * 1000.0,
                 MAX_FRAME_TIME * 1000.0
