@@ -2,6 +2,7 @@
 //! client-side prediction, and session management.
 
 pub mod authority;
+pub mod budget;
 pub mod chat;
 pub mod chunk_streaming;
 pub mod clock;
@@ -16,6 +17,10 @@ pub mod voxel_edit;
 pub use authority::{
     AuthoritativeWorld, ClientIntent, IntentValidationError, IntentValidator, PlayerState,
     ServerTickSchedule,
+};
+pub use budget::{
+    AdaptiveRate, BandwidthConfig, BandwidthStats, ClientBandwidthTracker, ClientId,
+    MessagePriority, MessageSender, PrioritizedMessage, send_tick_messages,
 };
 pub use chat::{
     ChatConfig, ChatMessage, ChatMessageIntent, ChatRejection, ChatScope, ConnectedClient,

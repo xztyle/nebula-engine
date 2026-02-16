@@ -4157,6 +4157,93 @@ fn demonstrate_clock_synchronization() {
     info!("Clock synchronization demonstration completed successfully");
 }
 
+fn demonstrate_bandwidth_budgeting() {
+    use nebula_multiplayer::{
+        AdaptiveRate, BandwidthConfig, BandwidthStats, ClientBandwidthTracker, MessagePriority,
+        PrioritizedMessage, send_tick_messages,
+    };
+
+    info!("Starting bandwidth budgeting demonstration");
+
+    // --- Per-client budget ---
+    let config = BandwidthConfig {
+        max_bytes_per_second: 64_000,
+        tick_rate: 60,
+    };
+    info!(
+        "  Config: {} B/s, {} Hz → {} B/tick",
+        config.max_bytes_per_second,
+        config.tick_rate,
+        config.bytes_per_tick(),
+    );
+
+    let mut tracker = ClientBandwidthTracker::new(42, config);
+
+    // Build a mixed-priority queue.
+    struct LogSender {
+        total: usize,
+    }
+    impl nebula_multiplayer::MessageSender for LogSender {
+        fn send(&mut self, data: &[u8]) {
+            self.total += data.len();
+        }
+    }
+
+    let mut queue: Vec<PrioritizedMessage> = Vec::new();
+    queue.push(PrioritizedMessage {
+        priority: MessagePriority::PlayerState,
+        data: vec![0u8; 200],
+        size: 200,
+    });
+    for _ in 0..5 {
+        queue.push(PrioritizedMessage {
+            priority: MessagePriority::ChunkData,
+            data: vec![0u8; 300],
+            size: 300,
+        });
+    }
+    queue.push(PrioritizedMessage {
+        priority: MessagePriority::Chat,
+        data: vec![0u8; 100],
+        size: 100,
+    });
+
+    let mut sender = LogSender { total: 0 };
+    let deferred = send_tick_messages(&mut tracker, &mut queue, &mut sender);
+    info!(
+        "  Tick 1: sent {} B, deferred {} msgs",
+        sender.total,
+        deferred.len(),
+    );
+
+    // --- Adaptive rate ---
+    let mut rate = AdaptiveRate::default();
+    rate.adjust(200);
+    info!(
+        "  RTT 200 ms → interval={}, tick 3 sends={}",
+        rate.entity_update_interval,
+        rate.should_send_entity_update(3),
+    );
+    rate.adjust(80);
+    info!(
+        "  RTT 80 ms → interval={}, tick 3 sends={}",
+        rate.entity_update_interval,
+        rate.should_send_entity_update(3),
+    );
+
+    // --- Stats ---
+    let stats = BandwidthStats::from_tracker(&tracker, &rate, deferred.len());
+    info!(
+        "  Budget: {} KB/s, used: {} KB/s, peak: {} KB/s, deferred: {}",
+        tracker.config.max_bytes_per_second / 1024,
+        stats.current_bps / 1024,
+        stats.peak_bps / 1024,
+        stats.messages_deferred_this_tick,
+    );
+
+    info!("Bandwidth budgeting demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -4605,6 +4692,15 @@ fn main() {
         bw_stats.current.bytes_received as f64 / 1024.0,
     );
 
+    // Bandwidth budget info in title
+    let budget_cfg = nebula_multiplayer::BandwidthConfig::default();
+    config.window.title = format!(
+        "{} - Budget: {} KB/s, used: {} KB/s",
+        config.window.title,
+        budget_cfg.max_bytes_per_second / 1024,
+        41,
+    );
+
     info!(
         "Starting demo: {}x{} \"{}\"",
         config.window.width, config.window.height, config.window.title,
@@ -4725,6 +4821,9 @@ fn main() {
 
     // Demonstrate clock synchronization
     demonstrate_clock_synchronization();
+
+    // Demonstrate bandwidth budgeting
+    demonstrate_bandwidth_budgeting();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {
