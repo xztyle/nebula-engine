@@ -22,6 +22,7 @@ pub struct HorizonCuller {
     cos_horizon: f64,
     /// The horizon plane distance from camera along the camera-to-center axis.
     /// Points beyond this distance along the axis are below the horizon.
+    #[allow(dead_code)]
     horizon_plane_dist: f64,
 }
 
@@ -179,11 +180,7 @@ mod tests {
         assert!(culler.is_above_horizon(near, 100.0));
 
         // A point at ~45° from the sub-camera pole — clearly visible
-        let mid_lat = DVec3::new(
-            radius * 0.707,
-            radius * 0.707,
-            0.0,
-        );
+        let mid_lat = DVec3::new(radius * 0.707, radius * 0.707, 0.0);
         assert!(culler.is_above_horizon(mid_lat, 100.0));
 
         // Antipodal point — culled

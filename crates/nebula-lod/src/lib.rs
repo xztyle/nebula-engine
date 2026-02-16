@@ -6,6 +6,7 @@ mod memory_budget;
 mod planet_lod;
 mod priority_queue;
 mod selector;
+mod transition;
 
 pub use face_quadtree_lod::{FaceQuadtreeLod, LodAction, LodChunkDescriptor};
 pub use horizon_culling::HorizonCuller;
@@ -15,3 +16,6 @@ pub use memory_budget::{
 pub use planet_lod::{PlanetLodConfig, PlanetLodSelector, PlanetRenderMode};
 pub use priority_queue::{ChunkPriorityFactors, LodPriorityQueue, compute_priority};
 pub use selector::{LodSelector, LodThresholds, chunk_distance_to_camera};
+pub use transition::{
+    LodTransitionConfig, LodTransitionManager, LodTransitionState, MorphVertex, smooth_step,
+};
