@@ -3680,6 +3680,69 @@ fn demonstrate_server_reconciliation() {
     info!("Server reconciliation demonstration completed successfully");
 }
 
+/// Demonstrates chunk data streaming: priority queue, compression, rate
+/// limiting, and client-side caching.
+fn demonstrate_chunk_data_streaming() {
+    use nebula_multiplayer::{
+        ChunkId, ChunkSendEntry, ChunkSendQueue, ChunkStreamConfig, ClientChunkCache,
+        compress_chunk, decompress_chunk,
+    };
+
+    info!("Starting chunk data streaming demonstration");
+
+    let config = ChunkStreamConfig::default();
+    let mut queue = ChunkSendQueue::new();
+
+    // Enqueue chunks at various distances.
+    for i in 0..5 {
+        let id = ChunkId {
+            face: 0,
+            lod: 0,
+            x: i,
+            y: 0,
+            z: 0,
+        };
+        let distance = (i as f64 + 1.0) * 100.0;
+        queue.enqueue(
+            ChunkSendEntry {
+                chunk_id: id,
+                priority: distance,
+            },
+            &config,
+        );
+    }
+    info!("Queued {} chunks for streaming", queue.queue.len());
+
+    // Generate fake voxel data and flush one tick.
+    let raw = vec![7u8; 4096];
+    let messages = queue.flush_tick(&config, |_| Some(raw.clone()));
+    info!(
+        "Tick produced {} messages, {} chunks remaining",
+        messages.len(),
+        queue.queue.len()
+    );
+
+    // Decompress on client side and cache.
+    let mut cache = ClientChunkCache::new(64);
+    for msg in &messages {
+        let decompressed = decompress_chunk(&msg.compressed_data).unwrap();
+        cache.insert(msg.chunk_id, decompressed);
+    }
+    info!("Client cache now holds {} chunks", cache.chunks.len());
+
+    // Verify compression ratio.
+    let compressed = compress_chunk(&raw);
+    let ratio = 1.0 - (compressed.len() as f64 / raw.len() as f64);
+    info!(
+        "Compression: {} -> {} bytes ({:.0}% reduction)",
+        raw.len(),
+        compressed.len(),
+        ratio * 100.0
+    );
+
+    info!("Chunk data streaming demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -4230,6 +4293,9 @@ fn main() {
 
     // Demonstrate server reconciliation
     demonstrate_server_reconciliation();
+
+    // Demonstrate chunk data streaming
+    demonstrate_chunk_data_streaming();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {

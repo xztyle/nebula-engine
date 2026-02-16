@@ -2,6 +2,7 @@
 //! client-side prediction, and session management.
 
 pub mod authority;
+pub mod chunk_streaming;
 pub mod interest;
 pub mod prediction;
 pub mod reconciliation;
@@ -10,6 +11,10 @@ pub mod replication;
 pub use authority::{
     AuthoritativeWorld, ClientIntent, IntentValidationError, IntentValidator, PlayerState,
     ServerTickSchedule,
+};
+pub use chunk_streaming::{
+    ChunkDataMessage, ChunkDecompressError, ChunkId, ChunkSendEntry, ChunkSendQueue,
+    ChunkStreamConfig, ClientChunkCache, compress_chunk, decompress_chunk,
 };
 pub use interest::{
     ClientInterestSet, InterestArea, InterestPosition, InterestTransitions, SpatialInterestSystem,
