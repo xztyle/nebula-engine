@@ -14,7 +14,7 @@ use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port}
 use nebula_planet::{
     AtmosphereParams, AtmosphereRenderer, DayNightState, ImpostorConfig, ImpostorRenderer,
     ImpostorState, LocalFrustum, OceanParams, OceanRenderer, OrbitalRenderer, OriginManager,
-    PlanetFaces, TransitionConfig, chunk_budget_for_altitude, create_orbit_camera,
+    PlanetFaces, PlanetaryCoord, TransitionConfig, chunk_budget_for_altitude, create_orbit_camera,
     generate_orbital_sphere, impostor_quad_size,
 };
 use nebula_render::{
@@ -629,6 +629,9 @@ impl AppState {
         };
         let uptime_seconds = now.duration_since(self.start_time).as_secs_f64();
 
+        // Compute planetary coordinates from camera position.
+        let planetary_position = self.compute_planetary_position();
+
         if let Ok(mut state) = self.debug_state.lock() {
             state.frame_count = self.game_loop.frame_count();
             state.frame_time_ms = frame_time_ms;
@@ -637,9 +640,43 @@ impl AppState {
             state.window_width = self.surface_width();
             state.window_height = self.surface_height();
             state.uptime_seconds = uptime_seconds;
+            state.planetary_position = planetary_position;
         }
 
         self.last_frame_time = now;
+    }
+
+    /// Compute the camera's planetary coordinate string for the debug HUD.
+    ///
+    /// Uses the demo planet (centered at origin) and the camera's f32 position.
+    /// Returns an empty string if no planet is loaded.
+    fn compute_planetary_position(&self) -> String {
+        let planet_radius = match &self.planet_faces {
+            Some(pf) => pf.planet_radius,
+            None => return String::new(),
+        };
+
+        let cam = self.camera.position;
+        let dx = cam.x as f64;
+        let dy = cam.y as f64;
+        let dz = cam.z as f64;
+        let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+
+        if dist < 1e-10 {
+            return String::from("0.0°N, 0.0°E, 0m alt");
+        }
+
+        let dir_y = dy / dist;
+        let latitude = dir_y.asin().to_degrees();
+        let longitude = dz.atan2(dx).to_degrees();
+        let altitude = dist - planet_radius;
+
+        let coord = PlanetaryCoord {
+            latitude,
+            longitude,
+            altitude,
+        };
+        format!("{coord}")
     }
 
     /// Checks if quit was requested via the debug API.

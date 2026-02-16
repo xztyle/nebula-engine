@@ -7,6 +7,7 @@ pub mod impostor;
 pub mod ocean;
 pub mod orbital;
 mod origin;
+pub mod planetary_coord;
 mod single_face;
 mod six_face;
 mod transition;
@@ -31,6 +32,7 @@ pub use orbital::{
     generate_terrain_color_texture, orbital_model_matrix,
 };
 pub use origin::OriginManager;
+pub use planetary_coord::{PlanetBody, PlanetaryCoord};
 pub use single_face::{
     FaceChunkMesh, SingleFaceLoader, SingleFaceRenderData, build_face_render_data,
     create_face_camera,

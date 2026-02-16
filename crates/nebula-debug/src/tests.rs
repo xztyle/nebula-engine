@@ -63,6 +63,7 @@ fn test_metrics_endpoint_returns_valid_json() {
         quit_requested: false,
         screenshot_requested: false,
         screenshot_data: None,
+        planetary_position: String::new(),
     }));
     let mut server = DebugServer::new(0);
     server.start(state).unwrap();

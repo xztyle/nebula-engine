@@ -24,6 +24,8 @@ pub struct DebugState {
     pub window_height: u32,
     pub uptime_seconds: f64,
     pub quit_requested: bool,
+    /// Human-readable planetary coordinate string (e.g., "45.3°N, 122.1°W, 150m alt").
+    pub planetary_position: String,
     /// Set to `true` by the debug server to request a screenshot capture.
     #[serde(skip)]
     pub screenshot_requested: bool,
