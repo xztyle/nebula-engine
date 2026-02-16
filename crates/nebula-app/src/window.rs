@@ -12,9 +12,9 @@ use bytemuck;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
 use nebula_render::{
-    BufferAllocator, Camera, IndexData, MeshBuffer, RenderContext, ShaderLibrary,
-    UNLIT_SHADER_SOURCE, UnlitPipeline, VertexPositionColor, draw_unlit,
-    init_render_context_blocking,
+    BufferAllocator, Camera, DepthBuffer, FrameEncoder, IndexData, MeshBuffer, RenderContext,
+    RenderPassBuilder, ShaderLibrary, UNLIT_SHADER_SOURCE, UnlitPipeline, VertexPositionColor,
+    draw_unlit, init_render_context_blocking,
 };
 use tracing::{error, info, instrument, warn};
 use winit::application::ApplicationHandler;
@@ -85,6 +85,10 @@ pub struct AppState {
     pub unlit_pipeline: Option<UnlitPipeline>,
     /// Triangle mesh for rendering.
     pub triangle_mesh: Option<MeshBuffer>,
+    /// Second triangle mesh behind the first for depth testing.
+    pub back_triangle_mesh: Option<MeshBuffer>,
+    /// Depth buffer for 3D depth testing.
+    pub depth_buffer: Option<DepthBuffer>,
     /// Camera uniform buffer.
     pub camera_buffer: Option<wgpu::Buffer>,
     /// Camera bind group.
@@ -118,6 +122,8 @@ impl AppState {
             last_frame_time: now,
             unlit_pipeline: None,
             triangle_mesh: None,
+            back_triangle_mesh: None,
+            depth_buffer: None,
             camera_buffer: None,
             camera_bind_group: None,
             camera: Camera::default(),
@@ -154,6 +160,8 @@ impl AppState {
             last_frame_time: now,
             unlit_pipeline: None,
             triangle_mesh: None,
+            back_triangle_mesh: None,
+            depth_buffer: None,
             camera_buffer: None,
             camera_bind_group: None,
             camera: Camera::default(),
@@ -178,22 +186,25 @@ impl AppState {
     fn initialize_rendering(&mut self, gpu: &RenderContext) {
         use wgpu::util::DeviceExt;
 
+        // Create depth buffer
+        let depth_buffer = DepthBuffer::new(&gpu.device, self.surface_width, self.surface_height);
+
         // Load the unlit shader
         let mut shader_library = ShaderLibrary::new();
         let shader = shader_library
             .load_from_source(&gpu.device, "unlit", UNLIT_SHADER_SOURCE)
             .expect("Failed to load unlit shader");
 
-        // Create the unlit pipeline
+        // Create the unlit pipeline with depth testing enabled
         let unlit_pipeline = UnlitPipeline::new(
             &gpu.device,
             &shader,
             gpu.surface_format,
-            None, // no depth buffer for now
+            Some(DepthBuffer::FORMAT), // enable depth testing
         );
 
-        // Create triangle mesh
-        let vertices = [
+        // Create front triangle mesh (closer to camera)
+        let front_vertices = [
             VertexPositionColor {
                 position: [0.0, 0.5, 0.0],
                 color: [1.0, 0.0, 0.0, 1.0],
@@ -207,12 +218,35 @@ impl AppState {
                 color: [0.0, 0.0, 1.0, 1.0],
             }, // blue right
         ];
+
+        // Create back triangle mesh (farther from camera, partially overlapping)
+        let back_vertices = [
+            VertexPositionColor {
+                position: [0.25, 0.25, -1.0], // offset to the right and back
+                color: [1.0, 1.0, 0.0, 1.0],  // yellow top
+            },
+            VertexPositionColor {
+                position: [-0.25, -0.75, -1.0],
+                color: [0.0, 1.0, 1.0, 1.0], // cyan left
+            },
+            VertexPositionColor {
+                position: [0.75, -0.75, -1.0],
+                color: [1.0, 0.0, 1.0, 1.0], // magenta right
+            },
+        ];
+
         let indices: [u16; 3] = [0, 1, 2];
 
         let allocator = BufferAllocator::new(&gpu.device);
         let triangle_mesh = allocator.create_mesh(
-            "demo-triangle",
-            bytemuck::cast_slice(&vertices),
+            "front-triangle",
+            bytemuck::cast_slice(&front_vertices),
+            IndexData::U16(&indices),
+        );
+
+        let back_triangle_mesh = allocator.create_mesh(
+            "back-triangle",
+            bytemuck::cast_slice(&back_vertices),
             IndexData::U16(&indices),
         );
 
@@ -244,10 +278,12 @@ impl AppState {
 
         self.unlit_pipeline = Some(unlit_pipeline);
         self.triangle_mesh = Some(triangle_mesh);
+        self.back_triangle_mesh = Some(back_triangle_mesh);
+        self.depth_buffer = Some(depth_buffer);
         self.camera_buffer = Some(camera_buffer);
         self.camera_bind_group = Some(camera_bind_group);
 
-        info!("Rendering pipeline initialized successfully");
+        info!("Rendering pipeline initialized successfully with depth buffer");
     }
 
     /// Updates the debug state with current frame metrics.
@@ -347,6 +383,12 @@ impl ApplicationHandler for AppState {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(new_size.width, new_size.height);
                 }
+
+                // Resize depth buffer
+                if let (Some(depth_buffer), Some(gpu)) = (&mut self.depth_buffer, &self.gpu) {
+                    depth_buffer.resize(&gpu.device, new_size.width, new_size.height);
+                }
+
                 info!("Window resized to {}x{}", new_size.width, new_size.height);
             }
             WindowEvent::ScaleFactorChanged { .. } => {
@@ -421,49 +463,54 @@ impl ApplicationHandler for AppState {
                     };
 
                     match gpu.get_current_texture() {
-                        Ok(output) => {
-                            let view = output
-                                .texture
-                                .create_view(&wgpu::TextureViewDescriptor::default());
-                            let mut encoder = gpu.device.create_command_encoder(
-                                &wgpu::CommandEncoderDescriptor {
-                                    label: Some("Render Encoder"),
-                                },
+                        Ok(surface_texture) => {
+                            let mut frame_encoder = FrameEncoder::new(
+                                &gpu.device,
+                                Arc::new(gpu.queue.clone()),
+                                surface_texture,
                             );
+
+                            // Create render pass builder with depth buffer
+                            let pass_builder = if let Some(depth_buffer) = &self.depth_buffer {
+                                RenderPassBuilder::new()
+                                    .clear_color(clear_color)
+                                    .depth(depth_buffer.view.clone(), DepthBuffer::CLEAR_VALUE)
+                                    .label("depth-test-pass")
+                            } else {
+                                RenderPassBuilder::new().clear_color(clear_color)
+                            };
 
                             {
                                 let mut render_pass =
-                                    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                        label: Some("Render Pass"),
-                                        color_attachments: &[Some(
-                                            wgpu::RenderPassColorAttachment {
-                                                view: &view,
-                                                resolve_target: None,
-                                                ops: wgpu::Operations {
-                                                    load: wgpu::LoadOp::Clear(clear_color),
-                                                    store: wgpu::StoreOp::Store,
-                                                },
-                                                depth_slice: None,
-                                            },
-                                        )],
-                                        depth_stencil_attachment: None,
-                                        timestamp_writes: None,
-                                        occlusion_query_set: None,
-                                        multiview_mask: None,
-                                    });
+                                    frame_encoder.begin_render_pass(&pass_builder);
 
-                                // Render the triangle if we have all the required resources
-                                if let (Some(pipeline), Some(mesh), Some(bind_group)) = (
-                                    &self.unlit_pipeline,
-                                    &self.triangle_mesh,
-                                    &self.camera_bind_group,
-                                ) {
-                                    draw_unlit(&mut render_pass, pipeline, bind_group, mesh);
+                                // Render both triangles if we have all the required resources
+                                if let (Some(pipeline), Some(bind_group)) =
+                                    (&self.unlit_pipeline, &self.camera_bind_group)
+                                {
+                                    // Render the back triangle first (farther away)
+                                    if let Some(back_mesh) = &self.back_triangle_mesh {
+                                        draw_unlit(
+                                            &mut render_pass,
+                                            pipeline,
+                                            bind_group,
+                                            back_mesh,
+                                        );
+                                    }
+
+                                    // Render the front triangle second (closer)
+                                    if let Some(front_mesh) = &self.triangle_mesh {
+                                        draw_unlit(
+                                            &mut render_pass,
+                                            pipeline,
+                                            bind_group,
+                                            front_mesh,
+                                        );
+                                    }
                                 }
                             }
 
-                            gpu.queue.submit(std::iter::once(encoder.finish()));
-                            output.present();
+                            frame_encoder.submit();
                         }
                         Err(nebula_render::SurfaceError::Lost) => {
                             let w = self.surface_width;
