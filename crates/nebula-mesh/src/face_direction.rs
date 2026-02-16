@@ -83,6 +83,21 @@ impl FaceDirection {
     pub fn index(self) -> usize {
         self as usize
     }
+
+    /// Constructs a `FaceDirection` from a `u8` index (0–5).
+    ///
+    /// Returns `None` if the value is out of range.
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::PosX),
+            1 => Some(Self::NegX),
+            2 => Some(Self::PosY),
+            3 => Some(Self::NegY),
+            4 => Some(Self::PosZ),
+            5 => Some(Self::NegZ),
+            _ => None,
+        }
+    }
 }
 
 /// One of 12 edge-adjacent directions (two axes out of bounds).
