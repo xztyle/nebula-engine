@@ -11,3 +11,4 @@ rand_chacha = "0.9"
 wgpu = { workspace = true }
 log = { workspace = true }
 bytemuck = { workspace = true }
+noise = { workspace = true }

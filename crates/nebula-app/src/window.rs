@@ -24,7 +24,9 @@ use nebula_render::{
     VertexPositionColor, VertexPositionNormalUv, draw_textured, draw_unlit,
     init_render_context_blocking,
 };
-use nebula_space::{SkyboxRenderer, StarfieldCubemap, StarfieldGenerator};
+use nebula_space::{
+    NebulaConfig, NebulaGenerator, SkyboxRenderer, StarfieldCubemap, StarfieldGenerator,
+};
 use tracing::{error, info, instrument, warn};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -510,7 +512,14 @@ impl AppState {
         // --- Procedural starfield skybox (renders to HDR target) ---
         let starfield_gen = StarfieldGenerator::new(42, 8000);
         let stars = starfield_gen.generate();
-        let starfield_cubemap = StarfieldCubemap::render(&stars, 512);
+        let mut starfield_cubemap = StarfieldCubemap::render(&stars, 512);
+
+        // Apply procedural nebula clouds onto the starfield cubemap.
+        let nebula = NebulaGenerator::new(NebulaConfig {
+            seed: 42,
+            ..NebulaConfig::default()
+        });
+        starfield_cubemap.apply_nebula(&nebula);
         let skybox = SkyboxRenderer::new(
             &gpu.device,
             &gpu.queue,
