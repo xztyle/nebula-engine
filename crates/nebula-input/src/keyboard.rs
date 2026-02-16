@@ -7,9 +7,10 @@
 //! Physical key codes are used throughout so that WASD movement works
 //! identically regardless of the user's keyboard layout.
 
+use crate::keybindings::Modifiers;
 use std::collections::HashSet;
 use winit::event::{ElementState, KeyEvent};
-use winit::keyboard::PhysicalKey;
+use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// Minimal description of a key event for processing.
 #[derive(Debug, Clone, Copy)]
@@ -100,6 +101,33 @@ impl KeyboardState {
     #[must_use]
     pub fn just_released(&self, key: PhysicalKey) -> bool {
         self.just_released.contains(&key)
+    }
+
+    /// Returns the currently active modifier keys as [`Modifiers`] bitflags.
+    #[must_use]
+    pub fn active_modifiers(&self) -> Modifiers {
+        let mut m = Modifiers::NONE;
+        if self.is_pressed(PhysicalKey::Code(KeyCode::ShiftLeft))
+            || self.is_pressed(PhysicalKey::Code(KeyCode::ShiftRight))
+        {
+            m |= Modifiers::SHIFT;
+        }
+        if self.is_pressed(PhysicalKey::Code(KeyCode::ControlLeft))
+            || self.is_pressed(PhysicalKey::Code(KeyCode::ControlRight))
+        {
+            m |= Modifiers::CTRL;
+        }
+        if self.is_pressed(PhysicalKey::Code(KeyCode::AltLeft))
+            || self.is_pressed(PhysicalKey::Code(KeyCode::AltRight))
+        {
+            m |= Modifiers::ALT;
+        }
+        if self.is_pressed(PhysicalKey::Code(KeyCode::SuperLeft))
+            || self.is_pressed(PhysicalKey::Code(KeyCode::SuperRight))
+        {
+            m |= Modifiers::SUPER;
+        }
+        m
     }
 
     /// Clears `just_pressed` and `just_released` sets. Call at end of frame.

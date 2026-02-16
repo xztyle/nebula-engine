@@ -3,6 +3,7 @@
 pub mod action_map;
 pub mod gamepad;
 pub mod input_context;
+pub mod keybindings;
 pub mod keyboard;
 pub mod mouse;
 
@@ -12,5 +13,6 @@ pub use action_map::{
 };
 pub use gamepad::{GamepadAxes, GamepadManager, GamepadState, UnifiedButton};
 pub use input_context::{CursorMode, InputContext, InputContextStack, TextInputBuffer};
+pub use keybindings::{Conflict, Modifiers, RebindState};
 pub use keyboard::{KeyboardState, RawKeyEvent};
 pub use mouse::MouseState;

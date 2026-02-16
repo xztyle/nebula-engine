@@ -5,6 +5,7 @@
 //! [`ActionResolver`], which reads the current keyboard, mouse, and gamepad state.
 
 use crate::gamepad::{GamepadState, UnifiedButton};
+use crate::keybindings::Modifiers;
 use crate::keyboard::KeyboardState;
 use crate::mouse::MouseState;
 use serde::{Deserialize, Serialize};
@@ -145,12 +146,27 @@ pub enum GamepadAxisBinding {
 }
 
 /// A physical input source that can be bound to an action.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum InputBinding {
     /// A keyboard key (physical scan code).
     Key(#[serde(with = "keycode_serde")] KeyCode),
+    /// A keyboard key with required modifier keys.
+    KeyWithModifiers {
+        /// The main key.
+        #[serde(with = "keycode_serde")]
+        key: KeyCode,
+        /// Required modifiers (SHIFT, CTRL, ALT, SUPER).
+        modifiers: Modifiers,
+    },
     /// A mouse button.
     MouseButton(MouseButtonBinding),
+    /// A mouse button with required modifier keys.
+    MouseButtonWithModifiers {
+        /// The mouse button.
+        button: MouseButtonBinding,
+        /// Required modifiers (SHIFT, CTRL, ALT, SUPER).
+        modifiers: Modifiers,
+    },
     /// A mouse axis (analog).
     MouseAxis(MouseAxisBinding),
     /// A gamepad button (digital).
@@ -449,7 +465,12 @@ impl ActionResolver {
 
             for binding in bindings {
                 // Skip keyboard bindings if keyboard is None
-                if keyboard.is_none() && matches!(binding, InputBinding::Key(_)) {
+                if keyboard.is_none()
+                    && matches!(
+                        binding,
+                        InputBinding::Key(_) | InputBinding::KeyWithModifiers { .. }
+                    )
+                {
                     continue;
                 }
                 let v = Self::read_binding(binding, kb, mouse, gamepad);
@@ -476,8 +497,24 @@ impl ActionResolver {
                     0.0
                 }
             }
+            InputBinding::KeyWithModifiers { key, modifiers } => {
+                let active = keyboard.active_modifiers();
+                if keyboard.is_pressed(PhysicalKey::Code(*key)) && active == *modifiers {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             InputBinding::MouseButton(btn) => {
                 if mouse.is_button_pressed(btn.to_winit()) {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            InputBinding::MouseButtonWithModifiers { button, modifiers } => {
+                let active = keyboard.active_modifiers();
+                if mouse.is_button_pressed(button.to_winit()) && active == *modifiers {
                     1.0
                 } else {
                     0.0

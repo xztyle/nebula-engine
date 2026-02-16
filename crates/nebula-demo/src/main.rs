@@ -2881,10 +2881,24 @@ fn main() {
     // Gamepad manager for controller input.
     let mut gamepad_mgr = nebula_input::GamepadManager::new();
 
+    // Load keybindings from config or fall back to defaults.
+    let input_map = if let Some(input_path) = nebula_input::InputMap::default_config_path() {
+        info!("Loading keybindings from {}", input_path.display());
+        nebula_input::InputMap::load(&input_path)
+    } else {
+        info!("No config directory found; using default keybindings");
+        nebula_input::InputMap::default()
+    };
+
+    // Log active bindings at startup.
+    for (action, bindings) in &input_map.bindings {
+        info!("  {action:?} -> {bindings:?}");
+    }
+
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {
         name: "gameplay",
-        input_map: nebula_input::InputMap::default_fps(),
+        input_map,
         cursor_mode: nebula_input::CursorMode::Captured,
         consumes_input: true,
         text_input: false,
