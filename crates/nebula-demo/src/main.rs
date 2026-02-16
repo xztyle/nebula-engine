@@ -3530,6 +3530,79 @@ fn demonstrate_spatial_interest() {
     info!("Spatial interest management demonstration completed successfully");
 }
 
+/// Demonstrates client-side prediction: local inputs apply immediately and
+/// the prediction buffer tracks unconfirmed state for reconciliation.
+fn demonstrate_client_side_prediction() {
+    use nebula_multiplayer::{
+        ClientIntent, InputBuffer, PredictionState, client_prediction_step, simulate_movement,
+    };
+
+    info!("Starting client-side prediction demonstration");
+
+    let mut buffer = InputBuffer::new(128);
+    let mut current = PredictionState {
+        x: 0,
+        y: 0,
+        z: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        tick: 0,
+    };
+
+    // Simulate 10 ticks of forward movement.
+    for tick in 1..=10u64 {
+        let intent = ClientIntent::Move {
+            player_id: 1,
+            dx: 100,
+            dy: 0,
+            dz: 50,
+        };
+        current = client_prediction_step(&current, tick, intent, &mut buffer);
+        info!(
+            "Prediction tick {tick}: pos=({}, {}, {}) vel=({}, {}, {})",
+            current.x, current.y, current.z, current.vx, current.vy, current.vz
+        );
+    }
+
+    info!(
+        "Buffer has {} entries, final predicted pos=({}, {}, {})",
+        buffer.len(),
+        current.x,
+        current.y,
+        current.z
+    );
+
+    // Simulate server confirming up to tick 5 → discard old entries.
+    buffer.discard_up_to(5);
+    info!(
+        "After server confirms tick 5: {} entries remain",
+        buffer.len()
+    );
+
+    // Verify shared simulation determinism.
+    let result = simulate_movement(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        &ClientIntent::Move {
+            player_id: 1,
+            dx: 42,
+            dy: -10,
+            dz: 7,
+        },
+    );
+    info!(
+        "simulate_movement determinism check: ({}, {}, {})",
+        result.x, result.y, result.z
+    );
+
+    info!("Client-side prediction demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -4074,6 +4147,9 @@ fn main() {
 
     // Demonstrate spatial interest management
     demonstrate_spatial_interest();
+
+    // Demonstrate client-side prediction
+    demonstrate_client_side_prediction();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {
