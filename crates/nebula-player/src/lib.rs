@@ -1,10 +1,14 @@
 //! Camera controllers, player physics bridge, and player state management.
 
+pub mod camera_transition;
 pub mod first_person_camera;
 pub mod floating_origin;
 pub mod spaceship_controller;
 pub mod third_person_camera;
 
+pub use camera_transition::{
+    CameraSnapshot, CameraTransition, EasingFunction, camera_transition_system,
+};
 pub use first_person_camera::{
     FirstPersonCamera, first_person_look_system, first_person_move_system,
 };
