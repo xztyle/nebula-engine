@@ -23,6 +23,8 @@ pub struct Config {
     pub audio: AudioConfig,
     /// Debug/development settings.
     pub debug: DebugConfig,
+    /// Planet settings.
+    pub planet: PlanetConfig,
 }
 
 /// Window configuration.
@@ -113,6 +115,31 @@ pub struct DebugConfig {
     pub wireframe_mode: bool,
     /// Log level override (e.g., "debug", "info", "warn").
     pub log_level: String,
+}
+
+/// Planet configuration for the game world.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct PlanetConfig {
+    /// Planet radius in meters.
+    pub radius_m: f64,
+    /// Camera starting altitude above the surface in meters.
+    pub start_altitude_m: f64,
+    /// Enable free-fly camera (WASD + mouse look) instead of orbiting demo camera.
+    pub free_fly_camera: bool,
+    /// Free-fly camera speed in meters per second.
+    pub camera_speed_m_s: f64,
+}
+
+impl Default for PlanetConfig {
+    fn default() -> Self {
+        Self {
+            radius_m: 200.0,
+            start_altitude_m: 600.0,
+            free_fly_camera: false,
+            camera_speed_m_s: 1000.0,
+        }
+    }
 }
 
 // --- Default implementations ---

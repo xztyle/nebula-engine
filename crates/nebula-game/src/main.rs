@@ -1,10 +1,12 @@
 //! Elite Dangerous Lite — clean game entry point for the Nebula Engine.
 //!
-//! Opens a window with a dark space background, initializes the wgpu renderer,
-//! runs the AI Debug API on port 9999, and provides a game loop ready for
-//! ship and planet systems.
+//! Opens a window with a real-scale Earth planet visible from orbit,
+//! initializes the wgpu renderer, runs the AI Debug API on port 9999,
+//! and provides a free-fly camera for exploring the planet.
 //!
 //! Run with: `cargo run -p nebula-game`
+
+mod planet;
 
 use clap::Parser;
 use nebula_config::Config;
@@ -39,6 +41,9 @@ fn main() {
         .title
         .unwrap_or_else(|| "Nebula Engine — Elite Dangerous Lite".to_string());
 
+    // Configure Earth-scale planet and orbital camera.
+    config.planet = planet::earth_config();
+
     // Initialize structured logging.
     nebula_log::init_logging(None, cfg!(debug_assertions), Some(&config));
 
@@ -46,6 +51,11 @@ fn main() {
     info!(
         "Window: {}x{} | Title: {}",
         config.window.width, config.window.height, config.window.title
+    );
+    info!(
+        "Planet: radius={:.0}km, altitude={:.0}km",
+        config.planet.radius_m / 1000.0,
+        config.planet.start_altitude_m / 1000.0,
     );
 
     // Run the engine: opens window, initializes wgpu, starts debug API on :9999,
@@ -64,7 +74,6 @@ fn game_update(
     _keyboard: &nebula_input::KeyboardState,
     _mouse: &nebula_input::MouseState,
 ) {
-    // TODO(story-02): Update planet systems
     // TODO(story-03): Ship 6DOF physics from keyboard/mouse input
     // TODO(story-05): Update HUD state
 }

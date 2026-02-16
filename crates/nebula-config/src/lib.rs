@@ -10,6 +10,7 @@ mod error;
 
 pub use cli::CliArgs;
 pub use config::{
-    AudioConfig, Config, DebugConfig, InputConfig, NetworkConfig, RenderConfig, WindowConfig,
+    AudioConfig, Config, DebugConfig, InputConfig, NetworkConfig, PlanetConfig, RenderConfig,
+    WindowConfig,
 };
 pub use error::ConfigError;

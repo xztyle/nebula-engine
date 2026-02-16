@@ -478,8 +478,19 @@ impl AppState {
             IndexData::U16(&indices),
         );
 
-        // Initialize camera position (orbit around the triangle at distance 3)
-        self.camera.position = glam::Vec3::new(0.0, 0.0, 3.0);
+        // Initialize camera position: use planet config if free-fly, else default orbit
+        if self.config.planet.free_fly_camera {
+            let start_dist =
+                self.config.planet.radius_m as f32 + self.config.planet.start_altitude_m as f32;
+            self.camera.position = glam::Vec3::new(0.0, start_dist, 0.0);
+            // Look down toward the planet
+            self.camera.rotation = glam::Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+            // Set far plane to 4x planet radius for visibility at orbital distances
+            self.camera.far = self.config.planet.radius_m as f32 * 4.0;
+            self.camera.near = 1.0; // 1 meter near plane
+        } else {
+            self.camera.position = glam::Vec3::new(0.0, 0.0, 3.0);
+        }
         self.camera
             .set_aspect_ratio(self.surface_width() as f32, self.surface_height() as f32);
 
@@ -581,11 +592,14 @@ impl AppState {
         self.initialize_planet_face(gpu, &allocator, &unlit_pipeline);
 
         // --- Atmosphere scattering renderer ---
-        let planet_radius = self
-            .planet_faces
-            .as_ref()
-            .map(|p| p.planet_radius as f32)
-            .unwrap_or(200.0);
+        let planet_radius = if self.config.planet.radius_m > 200.0 {
+            self.config.planet.radius_m as f32
+        } else {
+            self.planet_faces
+                .as_ref()
+                .map(|p| p.planet_radius as f32)
+                .unwrap_or(200.0)
+        };
         let atmo_params = AtmosphereParams::earth_like(planet_radius);
         let atmo_renderer = AtmosphereRenderer::new(&gpu.device, gpu.surface_format, atmo_params);
         let atmo_bind_group = atmo_renderer.create_bind_group(&gpu.device, &depth_buffer.view);
@@ -1310,6 +1324,7 @@ impl ApplicationHandler for AppState {
                 let transition_blend = &mut self.transition_blend;
                 let chunk_budget = &mut self.chunk_budget;
                 let simulated_altitude = &mut self.simulated_altitude;
+                let planet_config = &self.config.planet;
 
                 self.game_loop.tick(
                     |dt, _sim_time| {
@@ -1319,38 +1334,86 @@ impl ApplicationHandler for AppState {
                         // Slow planet rotation (~1 revolution per 10 minutes)
                         *orbital_rotation += (dt as f32) * 0.01;
 
-                        // Simulate altitude oscillation: 0 → 300 km → 0 over ~60s
-                        let alt_cycle = (*camera_time * 0.1).sin().abs();
-                        *simulated_altitude = alt_cycle * 300_000.0;
+                        if planet_config.free_fly_camera {
+                            // Free-fly camera: WASD + mouse look
+                            let speed = planet_config.camera_speed_m_s as f32 * dt as f32;
+
+                            // Mouse look: update rotation from mouse delta
+                            let sensitivity = 0.002_f32;
+                            let delta = mouse_state.delta();
+                            let yaw = -delta.x * sensitivity;
+                            let pitch = -delta.y * sensitivity;
+                            let yaw_rot = glam::Quat::from_rotation_y(yaw);
+                            let right = camera.rotation * glam::Vec3::X;
+                            let pitch_rot = glam::Quat::from_axis_angle(right, pitch);
+                            camera.rotation = (yaw_rot * pitch_rot * camera.rotation).normalize();
+
+                            // Movement relative to camera orientation
+                            use winit::keyboard::{KeyCode, PhysicalKey};
+                            let forward = camera.rotation * -glam::Vec3::Z;
+                            let right = camera.rotation * glam::Vec3::X;
+                            let up = glam::Vec3::Y;
+                            let mut movement = glam::Vec3::ZERO;
+                            let key = |k: KeyCode| PhysicalKey::Code(k);
+                            if keyboard_state.is_pressed(key(KeyCode::KeyW)) {
+                                movement += forward;
+                            }
+                            if keyboard_state.is_pressed(key(KeyCode::KeyS)) {
+                                movement -= forward;
+                            }
+                            if keyboard_state.is_pressed(key(KeyCode::KeyD)) {
+                                movement += right;
+                            }
+                            if keyboard_state.is_pressed(key(KeyCode::KeyA)) {
+                                movement -= right;
+                            }
+                            if keyboard_state.is_pressed(key(KeyCode::Space)) {
+                                movement += up;
+                            }
+                            if keyboard_state.is_pressed(key(KeyCode::ShiftLeft)) {
+                                movement -= up;
+                            }
+                            // Boost with Ctrl
+                            let boost = if keyboard_state.is_pressed(key(KeyCode::ControlLeft)) {
+                                10.0
+                            } else {
+                                1.0
+                            };
+                            if movement.length_squared() > 0.0 {
+                                camera.position += movement.normalize() * speed * boost;
+                            }
+
+                            // Compute altitude for transition system
+                            let dist = camera.position.length() as f64;
+                            *simulated_altitude = (dist - planet_config.radius_m).max(0.0);
+                        } else {
+                            // Simulate altitude oscillation: 0 → 300 km → 0 over ~60s
+                            let alt_cycle = (*camera_time * 0.1).sin().abs();
+                            *simulated_altitude = alt_cycle * 300_000.0;
+
+                            // Update camera to orbit around the triangle
+                            let orbit_radius = 3.0f64;
+                            let orbit_speed = 0.5f64;
+                            let angle = *camera_time * orbit_speed;
+                            camera.position = glam::Vec3::new(
+                                (angle.cos() * orbit_radius) as f32,
+                                0.0,
+                                (angle.sin() * orbit_radius) as f32,
+                            );
+                            let target = glam::Vec3::ZERO;
+                            let up = glam::Vec3::Y;
+                            let forward = (target - camera.position).normalize();
+                            let right = forward.cross(up).normalize();
+                            let camera_up = right.cross(forward).normalize();
+                            let rotation_mat = glam::Mat3::from_cols(right, camera_up, -forward);
+                            camera.rotation = glam::Quat::from_mat3(&rotation_mat);
+                        }
 
                         // Update transition blend and chunk budget
                         let (_mode, blend) = transition_config.classify(*simulated_altitude);
                         *transition_blend = blend;
                         *chunk_budget =
                             chunk_budget_for_altitude(*simulated_altitude, transition_config);
-
-                        // Update camera to orbit around the triangle
-                        let orbit_radius = 3.0f64;
-                        let orbit_speed = 0.5f64; // radians per second
-                        let angle = *camera_time * orbit_speed;
-
-                        // Position camera on a circular orbit around the origin
-                        camera.position = glam::Vec3::new(
-                            (angle.cos() * orbit_radius) as f32,
-                            0.0,
-                            (angle.sin() * orbit_radius) as f32,
-                        );
-
-                        // Make camera look at the origin (triangle center)
-                        let target = glam::Vec3::ZERO;
-                        let up = glam::Vec3::Y;
-                        let forward = (target - camera.position).normalize();
-                        let right = forward.cross(up).normalize();
-                        let camera_up = right.cross(forward).normalize();
-
-                        // Create rotation matrix from basis vectors
-                        let rotation_mat = glam::Mat3::from_cols(right, camera_up, -forward);
-                        camera.rotation = glam::Quat::from_mat3(&rotation_mat);
 
                         // Update camera uniform buffer
                         if let (Some(buffer), Some(gpu)) = (camera_buffer, gpu) {
@@ -1409,29 +1472,37 @@ impl ApplicationHandler for AppState {
                                 // Build rotation-only inverse VP for skybox
                                 let aspect = self.surface_width() as f32
                                     / self.surface_height().max(1) as f32;
-                                let orbit_angle = self.camera_time * 0.3;
-                                let planet_radius = self
-                                    .planet_faces
-                                    .as_ref()
-                                    .map(|p| p.planet_radius as f32)
-                                    .unwrap_or(200.0);
-                                let altitude = planet_radius * 3.0;
-                                let dist = planet_radius + altitude;
-                                let tilt = 0.4_f32;
-                                let eye = glam::Vec3::new(
-                                    (orbit_angle.sin() as f32) * dist * tilt.cos(),
-                                    dist * tilt.sin(),
-                                    (orbit_angle.cos() as f32) * dist * tilt.cos(),
-                                );
-                                let forward = (-eye).normalize();
-                                let right = forward.cross(glam::Vec3::Y).normalize();
-                                let up = right.cross(forward).normalize();
+
+                                let (forward, right, up) = if self.config.planet.free_fly_camera {
+                                    let rot_mat = glam::Mat3::from_quat(self.camera.rotation);
+                                    (-rot_mat.z_axis, rot_mat.x_axis, rot_mat.y_axis)
+                                } else {
+                                    let orbit_angle = self.camera_time * 0.3;
+                                    let planet_radius = self
+                                        .planet_faces
+                                        .as_ref()
+                                        .map(|p| p.planet_radius as f32)
+                                        .unwrap_or(200.0);
+                                    let altitude = planet_radius * 3.0;
+                                    let dist = planet_radius + altitude;
+                                    let tilt = 0.4_f32;
+                                    let eye = glam::Vec3::new(
+                                        (orbit_angle.sin() as f32) * dist * tilt.cos(),
+                                        dist * tilt.sin(),
+                                        (orbit_angle.cos() as f32) * dist * tilt.cos(),
+                                    );
+                                    let fwd = (-eye).normalize();
+                                    let r = fwd.cross(glam::Vec3::Y).normalize();
+                                    let u = r.cross(fwd).normalize();
+                                    (fwd, r, u)
+                                };
                                 let view_rot = glam::Mat4::from_cols(
                                     glam::Vec4::new(right.x, up.x, -forward.x, 0.0),
                                     glam::Vec4::new(right.y, up.y, -forward.y, 0.0),
                                     glam::Vec4::new(right.z, up.z, -forward.z, 0.0),
                                     glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
                                 );
+
                                 let proj = glam::Mat4::perspective_rh(
                                     70.0_f32.to_radians(),
                                     aspect,
@@ -1590,20 +1661,24 @@ impl ApplicationHandler for AppState {
                             {
                                 let aspect = self.surface_width() as f32
                                     / self.surface_height().max(1) as f32;
-                                let orbit_angle = self.camera_time * 0.3;
-                                let planet_radius = self
-                                    .planet_faces
-                                    .as_ref()
-                                    .map(|p| p.planet_radius as f32)
-                                    .unwrap_or(200.0);
-                                let altitude = planet_radius * 3.0;
-                                let vp = create_orbit_camera(
-                                    planet_radius,
-                                    altitude,
-                                    orbit_angle,
-                                    0.4,
-                                    aspect,
-                                );
+                                let vp = if self.config.planet.free_fly_camera {
+                                    self.camera.view_projection_matrix()
+                                } else {
+                                    let orbit_angle = self.camera_time * 0.3;
+                                    let planet_radius = self
+                                        .planet_faces
+                                        .as_ref()
+                                        .map(|p| p.planet_radius as f32)
+                                        .unwrap_or(200.0);
+                                    let altitude = planet_radius * 3.0;
+                                    create_orbit_camera(
+                                        planet_radius,
+                                        altitude,
+                                        orbit_angle,
+                                        0.4,
+                                        aspect,
+                                    )
+                                };
 
                                 orbital.update(
                                     &gpu.queue,
