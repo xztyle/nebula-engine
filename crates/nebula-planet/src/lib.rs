@@ -3,6 +3,7 @@
 pub mod atmosphere;
 mod culling;
 pub mod day_night;
+pub mod ocean;
 pub mod orbital;
 mod origin;
 mod single_face;
@@ -14,6 +15,10 @@ pub use culling::{CullResult, LocalFrustum, PlanetBounds};
 pub use day_night::{
     DayNightClock, DayNightState, ambient_intensity, star_visibility, sun_color,
     sun_direction_from_time, sun_intensity_curve,
+};
+pub use ocean::{
+    OceanParams, OceanRenderer, OceanUniform, compute_water_color, compute_wave_displacement,
+    ray_sphere_intersect_f32,
 };
 pub use orbital::{
     OrbitalMesh, OrbitalPipeline, OrbitalRenderer, PlanetUniform, generate_orbital_sphere,

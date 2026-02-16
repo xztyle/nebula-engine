@@ -12,9 +12,9 @@ use bytemuck;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
 use nebula_planet::{
-    AtmosphereParams, AtmosphereRenderer, DayNightState, LocalFrustum, OrbitalRenderer,
-    OriginManager, PlanetFaces, TransitionConfig, chunk_budget_for_altitude, create_orbit_camera,
-    generate_orbital_sphere,
+    AtmosphereParams, AtmosphereRenderer, DayNightState, LocalFrustum, OceanParams, OceanRenderer,
+    OrbitalRenderer, OriginManager, PlanetFaces, TransitionConfig, chunk_budget_for_altitude,
+    create_orbit_camera, generate_orbital_sphere,
 };
 use nebula_render::{
     BufferAllocator, Camera, CameraUniform, DepthBuffer, FrameEncoder, IndexData, MeshBuffer,
@@ -129,6 +129,8 @@ pub struct AppState {
     pub day_night: DayNightState,
     /// Orbital planet renderer (textured sphere for orbit view).
     pub orbital_renderer: Option<OrbitalRenderer>,
+    /// Ocean surface renderer.
+    pub ocean_renderer: Option<OceanRenderer>,
     /// Rotation angle for the orbital planet (radians).
     pub orbital_rotation: f32,
     /// Surface-to-orbit transition configuration.
@@ -184,6 +186,7 @@ impl AppState {
             atmosphere_renderer: None,
             atmosphere_bind_group: None,
             day_night: DayNightState::new(1200.0), // 20 minutes per day
+            ocean_renderer: None,
             orbital_renderer: None,
             orbital_rotation: 0.0,
             transition_config: TransitionConfig::default(),
@@ -241,6 +244,7 @@ impl AppState {
             atmosphere_renderer: None,
             atmosphere_bind_group: None,
             day_night: DayNightState::new(1200.0), // 20 minutes per day
+            ocean_renderer: None,
             orbital_renderer: None,
             orbital_rotation: 0.0,
             transition_config: TransitionConfig::default(),
@@ -455,6 +459,9 @@ impl AppState {
         // --- Orbital planet renderer ---
         self.initialize_orbital_renderer(gpu, planet_radius);
 
+        // --- Ocean surface renderer ---
+        self.initialize_ocean_renderer(gpu, planet_radius);
+
         self.unlit_pipeline = Some(unlit_pipeline);
         self.triangle_mesh = Some(triangle_mesh);
         self.back_triangle_mesh = Some(back_triangle_mesh);
@@ -500,6 +507,25 @@ impl AppState {
             tex_height
         );
         self.orbital_renderer = Some(orbital);
+    }
+
+    /// Initialize the ocean surface renderer.
+    fn initialize_ocean_renderer(&mut self, gpu: &RenderContext, planet_radius: f32) {
+        let mesh = generate_orbital_sphere(4); // slightly lower res than orbital
+        let params = OceanParams::default();
+        let ocean = OceanRenderer::new(
+            &gpu.device,
+            gpu.surface_format,
+            &mesh,
+            params,
+            planet_radius,
+        );
+        info!(
+            "Ocean renderer initialized: {} vertices, {} triangles",
+            mesh.positions.len(),
+            mesh.indices.len() / 3
+        );
+        self.ocean_renderer = Some(ocean);
     }
 
     /// Initialize six-face planet terrain rendering.
@@ -962,6 +988,52 @@ impl ApplicationHandler for AppState {
                                         let mut pass = frame_encoder.begin_render_pass(&pb);
                                         draw_unlit(&mut pass, pipeline, bind_group, planet_mesh);
                                     }
+                                }
+                            }
+
+                            // === Pass 1.25: Ocean surface (after terrain, before atmosphere) ===
+                            {
+                                let sw = self.surface_wrapper.physical_width();
+                                let sh = self.surface_wrapper.physical_height();
+                                let aspect = sw as f32 / sh.max(1) as f32;
+                                let orbit_angle = self.camera_time * 0.3;
+                                let planet_radius = self
+                                    .planet_faces
+                                    .as_ref()
+                                    .map(|p| p.planet_radius as f32)
+                                    .unwrap_or(200.0);
+                                let altitude = planet_radius * 0.8;
+                                let vp = create_orbit_camera(
+                                    planet_radius,
+                                    altitude,
+                                    orbit_angle,
+                                    0.4,
+                                    aspect,
+                                );
+                                let cam_dist = planet_radius + altitude;
+                                let cam_pos = glam::Vec3::new(
+                                    (orbit_angle.cos() * 0.4_f64.cos() * cam_dist as f64) as f32,
+                                    (0.4_f64.sin() * cam_dist as f64) as f32,
+                                    (orbit_angle.sin() * 0.4_f64.cos() * cam_dist as f64) as f32,
+                                );
+                                let sun_dir = self.day_night.sun_direction;
+                                let dt = crate::game_loop::FIXED_DT as f32;
+
+                                if let Some(ocean) = &mut self.ocean_renderer {
+                                    ocean.update(&gpu.queue, vp, sun_dir, cam_pos, dt);
+                                }
+
+                                if let (Some(ocean), Some(depth_buffer)) =
+                                    (&self.ocean_renderer, &self.depth_buffer)
+                                {
+                                    let ocean_pass_builder = RenderPassBuilder::new()
+                                        .preserve_color()
+                                        .depth(depth_buffer.view.clone(), DepthBuffer::CLEAR_VALUE)
+                                        .preserve_depth()
+                                        .label("ocean-pass");
+                                    let mut pass =
+                                        frame_encoder.begin_render_pass(&ocean_pass_builder);
+                                    ocean.render(&mut pass);
                                 }
                             }
 

@@ -26,6 +26,7 @@ pub struct DepthAttachmentConfig {
 pub struct RenderPassBuilder {
     clear_color: wgpu::Color,
     load_color: bool,
+    load_depth: bool,
     depth_attachment: Option<DepthAttachmentConfig>,
     msaa_resolve_target: Option<wgpu::TextureView>,
     label: Option<&'static str>,
@@ -43,6 +44,7 @@ impl RenderPassBuilder {
         Self {
             clear_color: SKY_BLUE,
             load_color: false,
+            load_depth: false,
             depth_attachment: None,
             msaa_resolve_target: None,
             label: None,
@@ -58,6 +60,14 @@ impl RenderPassBuilder {
     /// Set the clear color for the color attachment.
     pub fn clear_color(mut self, color: wgpu::Color) -> Self {
         self.clear_color = color;
+        self
+    }
+
+    /// Preserve existing depth attachment contents instead of clearing.
+    ///
+    /// Must be called after [`depth`](Self::depth) to have effect.
+    pub fn preserve_depth(mut self) -> Self {
+        self.load_depth = true;
         self
     }
 
@@ -120,13 +130,18 @@ impl RenderPassBuilder {
             depth_slice: None,
         };
 
+        let load_depth = self.load_depth;
         let depth_stencil_attachment =
             self.depth_attachment
                 .as_ref()
                 .map(|depth| wgpu::RenderPassDepthStencilAttachment {
                     view: &depth.view,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(depth.clear_value),
+                        load: if load_depth {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(depth.clear_value)
+                        },
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,

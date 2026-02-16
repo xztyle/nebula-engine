@@ -10,6 +10,7 @@ pub mod texture;
 
 pub use mesh::{OrbitalMesh, generate_orbital_sphere};
 pub use pipeline::{
-    ORBITAL_SHADER_SOURCE, OrbitalPipeline, OrbitalRenderer, PlanetUniform, orbital_model_matrix,
+    ORBITAL_SHADER_SOURCE, OrbitalPipeline, OrbitalRenderer, OrbitalVertex, PlanetUniform,
+    orbital_model_matrix,
 };
 pub use texture::generate_terrain_color_texture;
