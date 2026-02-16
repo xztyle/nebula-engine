@@ -7,6 +7,7 @@ pub mod interest;
 pub mod prediction;
 pub mod reconciliation;
 pub mod replication;
+pub mod voxel_edit;
 
 pub use authority::{
     AuthoritativeWorld, ClientIntent, IntentValidationError, IntentValidator, PlayerState,
@@ -31,4 +32,8 @@ pub use replication::{
     ComponentDescriptor, ComponentTypeTag, DespawnEntity, EntityUpdate, NetworkId,
     ReplicationClientSystem, ReplicationMessages, ReplicationServerSystem, ReplicationSet,
     SpawnEntity,
+};
+pub use voxel_edit::{
+    EditRejection, PlayerPosition, ServerChunkStore, VoxelEditEvent, VoxelEditIntent,
+    VoxelMaterial, apply_voxel_edit, validate_voxel_edit,
 };

@@ -3743,6 +3743,92 @@ fn demonstrate_chunk_data_streaming() {
     info!("Chunk data streaming demonstration completed successfully");
 }
 
+/// Demonstrates voxel edit replication: validation, application, and broadcast.
+fn demonstrate_voxel_edit_replication() {
+    use nebula_multiplayer::replication::NetworkId;
+    use nebula_multiplayer::{
+        ChunkId, EditRejection, PlayerPosition, ServerChunkStore, VoxelEditIntent, VoxelMaterial,
+        apply_voxel_edit, validate_voxel_edit,
+    };
+
+    info!("Starting voxel edit replication demonstration");
+
+    let chunk_id = ChunkId {
+        face: 0,
+        lod: 0,
+        x: 0,
+        y: 0,
+        z: 0,
+    };
+
+    let mut store = ServerChunkStore::new();
+    store.load_chunk(chunk_id, VoxelMaterial::AIR);
+
+    let player = PlayerPosition {
+        x: 1000,
+        y: 1000,
+        z: 1000,
+    };
+
+    // Valid placement.
+    let place = VoxelEditIntent::Place {
+        chunk_id,
+        local_x: 1,
+        local_y: 1,
+        local_z: 1,
+        material: VoxelMaterial::STONE,
+        source_inventory_slot: 0,
+    };
+
+    match validate_voxel_edit(&player, &place, &store) {
+        Ok(()) => {
+            let event = apply_voxel_edit(&place, &mut store, NetworkId(1), 1);
+            info!(
+                "Voxel placed: material={:?} at chunk {:?} pos ({},{},{}), broadcast tick={}",
+                event.new_material,
+                event.chunk_id,
+                event.local_x,
+                event.local_y,
+                event.local_z,
+                event.tick,
+            );
+        }
+        Err(e) => info!("Unexpected rejection: {e}"),
+    }
+
+    // Duplicate placement (should be rejected as obstructed).
+    match validate_voxel_edit(&player, &place, &store) {
+        Ok(()) => info!("Unexpected success on duplicate placement"),
+        Err(EditRejection::Obstructed) => {
+            info!("Correctly rejected duplicate placement: obstructed");
+        }
+        Err(e) => info!("Unexpected rejection type: {e}"),
+    }
+
+    // Out-of-range edit.
+    let far_place = VoxelEditIntent::Place {
+        chunk_id: ChunkId {
+            face: 0,
+            lod: 0,
+            x: 100,
+            y: 100,
+            z: 100,
+        },
+        local_x: 0,
+        local_y: 0,
+        local_z: 0,
+        material: VoxelMaterial::DIRT,
+        source_inventory_slot: 0,
+    };
+    // Chunk not loaded — will be rejected.
+    match validate_voxel_edit(&player, &far_place, &store) {
+        Ok(()) => info!("Unexpected success on far placement"),
+        Err(e) => info!("Correctly rejected far placement: {e}"),
+    }
+
+    info!("Voxel edit replication demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -4296,6 +4382,9 @@ fn main() {
 
     // Demonstrate chunk data streaming
     demonstrate_chunk_data_streaming();
+
+    // Demonstrate voxel edit replication
+    demonstrate_voxel_edit_replication();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {
