@@ -4,6 +4,7 @@ pub mod camera_transition;
 pub mod first_person_camera;
 pub mod floating_origin;
 pub mod free_fly_camera;
+pub mod gravity_oriented_camera;
 pub mod spaceship_controller;
 pub mod third_person_camera;
 
@@ -20,6 +21,10 @@ pub use floating_origin::{
 pub use free_fly_camera::{
     DebugCameraOverlay, FreeFlyCam, free_fly_look_system, free_fly_move_system,
     free_fly_overlay_system, free_fly_speed_system, free_fly_toggle_system,
+};
+pub use gravity_oriented_camera::{
+    GravityDirection, GravityOrientedCamera, gravity_orient_rotation_system,
+    gravity_up_alignment_system,
 };
 pub use spaceship_controller::{
     SpaceshipController, apply_velocity_system, spaceship_rotation_system, spaceship_thrust_system,

@@ -2943,6 +2943,10 @@ fn main() {
     let mut free_fly_cam = nebula_player::FreeFlyCam::default();
     let mut free_fly_overlay = nebula_player::DebugCameraOverlay::default();
 
+    // Gravity-oriented camera: up always away from planet center.
+    let mut gravity_dir = nebula_player::GravityDirection::default();
+    let mut grav_cam = nebula_player::GravityOrientedCamera::default();
+
     // Camera transition state for smooth mode switches.
     let mut cam_transition: Option<nebula_player::CameraTransition> = None;
 
@@ -3019,6 +3023,26 @@ fn main() {
                 .clamp(-fps_camera.pitch_limit, fps_camera.pitch_limit);
             cam_rotation.0 = fps_camera.rotation();
         }
+
+        // Gravity-oriented camera: compute gravity direction from planet center,
+        // align up vector, then reorient rotation.
+        // Demo: planet center at origin, so gravity = -normalize(position).
+        {
+            let pos = demo_state.position;
+            let p = glam::Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+            let len = p.length();
+            gravity_dir.0 = if len > 1e-3 {
+                -p / len
+            } else {
+                glam::Vec3::NEG_Y
+            };
+        }
+        nebula_player::gravity_up_alignment_system(&gravity_dir, &mut grav_cam);
+        nebula_player::gravity_orient_rotation_system(
+            &grav_cam,
+            &mut cam_rotation,
+            Some(&fps_camera),
+        );
 
         tracing::trace!(
             "mouse delta=({:.1},{:.1}) yaw={:.3} pitch={:.3}",
