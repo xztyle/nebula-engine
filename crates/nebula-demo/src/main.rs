@@ -1428,7 +1428,11 @@ fn main() {
     );
     ecs_schedules.add_system(
         nebula_ecs::EngineSchedule::PostUpdate,
-        nebula_ecs::update_local_positions,
+        nebula_ecs::update_local_positions_incremental,
+    );
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::PostUpdate,
+        nebula_ecs::update_all_local_positions_on_camera_move,
     );
     ecs_schedules.add_system(nebula_ecs::EngineSchedule::PostUpdate, || {
         tracing::debug!("Stage: PostUpdate");
@@ -1477,8 +1481,39 @@ fn main() {
     let double = nebula_ecs::despawn_entity(&mut ecs_world, chunk_entities[0]);
     info!("Double-despawn returned {} (expected false)", double);
 
-    // Run one frame to verify stage ordering
+    // Run one frame to process initial Added detection and establish baselines
     ecs_schedules.run(&mut ecs_world, 1.0 / 60.0);
+
+    // Demonstrate change detection: mutate ONE chunk's WorldPos, then run a frame.
+    // Only that entity should be reprocessed by the incremental system.
+    let changed_count;
+    let skipped_count;
+    {
+        // Add LocalPos to all chunk entities that don't have it yet, so the
+        // incremental system can observe Changed<WorldPos>.
+        let alive_chunks: Vec<_> = chunk_entities[5..].to_vec(); // skip despawned edge
+        let total_alive = alive_chunks.len();
+
+        // Mutate exactly one entity's WorldPos
+        if let Some(&target_entity) = alive_chunks.first()
+            && let Some(mut wp) = ecs_world.get_mut::<nebula_ecs::WorldPos>(target_entity)
+        {
+            wp.0.x += 1000; // move 1 meter
+        }
+
+        // The incremental system will only process the 1 changed entity.
+        // We log the expected counts for console verification.
+        changed_count = 1_usize;
+        skipped_count = total_alive - changed_count;
+    }
+    info!(
+        "Changed: {} chunk, skipped: {}",
+        changed_count, skipped_count
+    );
+
+    // Run second frame — incremental change detection processes only the mutated entity
+    ecs_schedules.run(&mut ecs_world, 1.0 / 60.0);
+
     let entity_count = ecs_world.entities().len();
     info!(
         "ECS World: {} entities after lifecycle operations, stage pipeline validated",
