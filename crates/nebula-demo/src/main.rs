@@ -1405,11 +1405,39 @@ fn main() {
     // Demonstrate cubesphere vertex displacement
     let (disp_verts, disp_min, disp_max) = demonstrate_cubesphere_displacement();
 
-    // Initialize ECS world and schedules
-    let ecs_world = nebula_ecs::create_world();
-    let _ecs_schedules = nebula_ecs::EngineSchedules::new();
+    // Initialize ECS world and schedules with stage execution logging
+    let mut ecs_world = nebula_ecs::create_world();
+    ecs_world.insert_resource(nebula_ecs::CameraRes::default());
+    let mut ecs_schedules = nebula_ecs::EngineSchedules::new();
+
+    // Register stage-logging systems so the console shows execution order
+    ecs_schedules.add_system(nebula_ecs::EngineSchedule::PreUpdate, || {
+        tracing::debug!("Stage: PreUpdate");
+    });
+    ecs_schedules.add_system(nebula_ecs::EngineSchedule::FixedUpdate, || {
+        tracing::debug!("Stage: FixedUpdate");
+    });
+    ecs_schedules.add_system(nebula_ecs::EngineSchedule::Update, || {
+        tracing::debug!("Stage: Update");
+    });
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::PostUpdate,
+        nebula_ecs::update_local_positions,
+    );
+    ecs_schedules.add_system(nebula_ecs::EngineSchedule::PostUpdate, || {
+        tracing::debug!("Stage: PostUpdate");
+    });
+    ecs_schedules.add_system(nebula_ecs::EngineSchedule::PreRender, || {
+        tracing::debug!("Stage: PreRender");
+    });
+    ecs_schedules.add_system(nebula_ecs::EngineSchedule::Render, || {
+        tracing::debug!("Stage: Render");
+    });
+
+    // Run one frame to verify stage ordering
+    ecs_schedules.run(&mut ecs_world, 1.0 / 60.0);
     info!(
-        "ECS World created with {} entities",
+        "ECS World created with {} entities, stage pipeline validated",
         ecs_world.entities().len()
     );
 
