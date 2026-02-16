@@ -8,6 +8,8 @@ mod cube_face;
 mod face_coord;
 mod inverse;
 mod neighbor;
+mod planet_def;
+mod planet_registry;
 mod projection;
 mod quadtree;
 mod world_conv;
@@ -23,6 +25,8 @@ pub use cube_face::CubeFace;
 pub use face_coord::FaceCoord;
 pub use inverse::{direction_to_face, direction_to_face_coord, sphere_to_face_coord_everitt};
 pub use neighbor::{FaceDirection, LodNeighbor, SameFaceNeighbor};
+pub use planet_def::PlanetDef;
+pub use planet_registry::{PlanetRegistry, PlanetRegistryError};
 pub use projection::{
     ProjectionMethod, cube_to_sphere_everitt, face_coord_to_cube_point, face_coord_to_sphere,
     face_coord_to_sphere_everitt, project,
