@@ -13,7 +13,8 @@ use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
 use nebula_render::{
     BufferAllocator, Camera, DepthBuffer, FrameEncoder, IndexData, MeshBuffer, RenderContext,
-    RenderPassBuilder, ShaderLibrary, UNLIT_SHADER_SOURCE, UnlitPipeline, VertexPositionColor,
+    RenderPassBuilder, ShaderLibrary, TEXTURED_SHADER_SOURCE, TextureManager, TexturedPipeline,
+    UNLIT_SHADER_SOURCE, UnlitPipeline, VertexPositionColor, VertexPositionNormalUv, draw_textured,
     draw_unlit, init_render_context_blocking,
 };
 use tracing::{error, info, instrument, warn};
@@ -97,6 +98,14 @@ pub struct AppState {
     pub camera: Camera,
     /// Time accumulator for camera animation.
     pub camera_time: f64,
+    /// Textured pipeline for the checkerboard quad.
+    pub textured_pipeline: Option<TexturedPipeline>,
+    /// Textured quad mesh.
+    pub textured_quad_mesh: Option<MeshBuffer>,
+    /// Managed checkerboard texture (owns the bind group).
+    pub checkerboard_texture: Option<std::sync::Arc<nebula_render::ManagedTexture>>,
+    /// Camera bind group for the textured pipeline.
+    pub textured_camera_bind_group: Option<wgpu::BindGroup>,
 }
 
 impl AppState {
@@ -128,6 +137,10 @@ impl AppState {
             camera_bind_group: None,
             camera: Camera::default(),
             camera_time: 0.0,
+            textured_pipeline: None,
+            textured_quad_mesh: None,
+            checkerboard_texture: None,
+            textured_camera_bind_group: None,
         }
     }
 
@@ -166,6 +179,10 @@ impl AppState {
             camera_bind_group: None,
             camera: Camera::default(),
             camera_time: 0.0,
+            textured_pipeline: None,
+            textured_quad_mesh: None,
+            checkerboard_texture: None,
+            textured_camera_bind_group: None,
         }
     }
 
@@ -276,6 +293,79 @@ impl AppState {
             }],
         });
 
+        // --- Textured checkerboard quad ---
+        let mut texture_manager = TextureManager::new(&gpu.device);
+        let checkerboard_data = generate_checkerboard(64, 64, 8);
+        let managed_tex = texture_manager
+            .create_texture(
+                &gpu.device,
+                &gpu.queue,
+                "checkerboard",
+                &checkerboard_data,
+                64,
+                64,
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+                true,
+            )
+            .expect("Failed to create checkerboard texture");
+
+        let textured_shader = shader_library
+            .load_from_source(&gpu.device, "textured", TEXTURED_SHADER_SOURCE)
+            .expect("Failed to load textured shader");
+
+        let textured_pipeline = TexturedPipeline::new(
+            &gpu.device,
+            &textured_shader,
+            gpu.surface_format,
+            Some(DepthBuffer::FORMAT),
+            texture_manager.bind_group_layout(),
+        );
+
+        // Quad behind the triangles at z = -2
+        let quad_vertices = [
+            VertexPositionNormalUv {
+                position: [-1.5, -1.5, -2.0],
+                normal: [0.0, 0.0, 1.0],
+                uv: [0.0, 1.0],
+            },
+            VertexPositionNormalUv {
+                position: [1.5, -1.5, -2.0],
+                normal: [0.0, 0.0, 1.0],
+                uv: [1.0, 1.0],
+            },
+            VertexPositionNormalUv {
+                position: [1.5, 1.5, -2.0],
+                normal: [0.0, 0.0, 1.0],
+                uv: [1.0, 0.0],
+            },
+            VertexPositionNormalUv {
+                position: [-1.5, 1.5, -2.0],
+                normal: [0.0, 0.0, 1.0],
+                uv: [0.0, 0.0],
+            },
+        ];
+        let quad_indices: [u16; 6] = [0, 1, 2, 2, 3, 0];
+
+        let textured_quad_mesh = allocator.create_mesh(
+            "checkerboard-quad",
+            bytemuck::cast_slice(&quad_vertices),
+            IndexData::U16(&quad_indices),
+        );
+
+        let textured_camera_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("textured-camera-bind-group"),
+            layout: &textured_pipeline.camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+        });
+
+        self.textured_pipeline = Some(textured_pipeline);
+        self.textured_quad_mesh = Some(textured_quad_mesh);
+        self.checkerboard_texture = Some(managed_tex);
+        self.textured_camera_bind_group = Some(textured_camera_bind_group);
+
         self.unlit_pipeline = Some(unlit_pipeline);
         self.triangle_mesh = Some(triangle_mesh);
         self.back_triangle_mesh = Some(back_triangle_mesh);
@@ -283,7 +373,7 @@ impl AppState {
         self.camera_buffer = Some(camera_buffer);
         self.camera_bind_group = Some(camera_bind_group);
 
-        info!("Rendering pipeline initialized successfully with depth buffer");
+        info!("Rendering pipeline initialized successfully with depth buffer and textured quad");
     }
 
     /// Updates the debug state with current frame metrics.
@@ -508,6 +598,27 @@ impl ApplicationHandler for AppState {
                                         );
                                     }
                                 }
+
+                                // Render the textured checkerboard quad behind everything
+                                if let (
+                                    Some(tex_pipeline),
+                                    Some(tex_cam_bg),
+                                    Some(checker_tex),
+                                    Some(quad_mesh),
+                                ) = (
+                                    &self.textured_pipeline,
+                                    &self.textured_camera_bind_group,
+                                    &self.checkerboard_texture,
+                                    &self.textured_quad_mesh,
+                                ) {
+                                    draw_textured(
+                                        &mut render_pass,
+                                        tex_pipeline,
+                                        tex_cam_bg,
+                                        &checker_tex.bind_group,
+                                        quad_mesh,
+                                    );
+                                }
                             }
 
                             frame_encoder.submit();
@@ -588,6 +699,22 @@ where
     }));
 
     event_loop.run_app(&mut app).expect("Event loop failed");
+}
+
+/// Generate a checkerboard RGBA8 texture.
+fn generate_checkerboard(width: u32, height: u32, cell_size: u32) -> Vec<u8> {
+    let mut data = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let is_white = ((x / cell_size) + (y / cell_size)).is_multiple_of(2);
+            if is_white {
+                data.extend_from_slice(&[230, 230, 230, 255]);
+            } else {
+                data.extend_from_slice(&[40, 40, 40, 255]);
+            }
+        }
+    }
+    data
 }
 
 #[cfg(test)]

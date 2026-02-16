@@ -75,8 +75,8 @@ impl DepthBuffer {
 mod tests {
     use super::*;
 
-    fn create_test_device() -> wgpu::Device {
-        // Create a minimal test device for unit tests
+    fn create_test_device() -> Option<wgpu::Device> {
+        // Create a minimal test device for unit tests (returns None on headless CI)
         pollster::block_on(async {
             let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
                 backends: wgpu::Backends::all(),
@@ -89,15 +89,14 @@ mod tests {
                     force_fallback_adapter: false,
                     compatible_surface: None,
                 })
-                .await
-                .expect("Failed to find adapter for tests");
+                .await?;
 
             let (device, _queue) = adapter
                 .request_device(&wgpu::DeviceDescriptor::default())
                 .await
-                .expect("Failed to create device for tests");
+                .ok()?;
 
-            device
+            Some(device)
         })
     }
 
