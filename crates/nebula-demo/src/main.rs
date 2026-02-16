@@ -11,7 +11,7 @@ use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
 use nebula_cubesphere::PlanetDef;
 use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
-use nebula_voxel::{ChunkData, Transparency, VoxelTypeDef, VoxelTypeId, VoxelTypeRegistry};
+use nebula_voxel::{Chunk, ChunkData, Transparency, VoxelTypeDef, VoxelTypeId, VoxelTypeRegistry};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use tracing::info;
@@ -388,6 +388,57 @@ fn demonstrate_palette_chunk() {
     info!("Palette-compressed chunk demonstration completed successfully");
 }
 
+/// Demonstrates the high-level Chunk get/set/fill API with bounds checking.
+fn demonstrate_chunk_api() {
+    info!("Starting chunk get/set API demonstration");
+
+    let mut chunk = Chunk::new();
+
+    // Fill procedurally: stone below y=16, dirt at y=16, grass at y=17, air above.
+    let stone = VoxelTypeId(1);
+    let dirt = VoxelTypeId(2);
+    let grass = VoxelTypeId(3);
+
+    for z in 0u8..32 {
+        for x in 0u8..32 {
+            for y in 0u8..16 {
+                chunk.set(x, y, z, stone);
+            }
+            chunk.set(x, 16, z, dirt);
+            chunk.set(x, 17, z, grass);
+        }
+    }
+
+    // Verify some voxels.
+    assert_eq!(chunk.get(0, 0, 0), stone);
+    assert_eq!(chunk.get(15, 16, 15), dirt);
+    assert_eq!(chunk.get(31, 17, 31), grass);
+    assert_eq!(chunk.get(0, 31, 0), VoxelTypeId(0)); // air above
+
+    info!(
+        "Chunk API: version={}, dirty=0x{:02X}, palette={}",
+        chunk.version(),
+        chunk.dirty_flags(),
+        chunk.palette_len(),
+    );
+
+    // Test fill.
+    chunk.fill(VoxelTypeId(0));
+    assert_eq!(chunk.get(0, 0, 0), VoxelTypeId(0));
+    assert_eq!(chunk.palette_len(), 1);
+
+    info!(
+        "After fill(Air): version={}, palette={}",
+        chunk.version(),
+        chunk.palette_len(),
+    );
+
+    // Out-of-bounds access is safe.
+    assert_eq!(chunk.get(32, 0, 0), VoxelTypeId(0));
+
+    info!("Chunk get/set API demonstration completed successfully");
+}
+
 /// Demonstrates cube-to-sphere projection by projecting points on each face
 /// and verifying the sphere is well-formed.
 fn main() {
@@ -443,6 +494,9 @@ fn main() {
 
     // Demonstrate palette-compressed chunk
     demonstrate_palette_chunk();
+
+    // Demonstrate chunk get/set API
+    demonstrate_chunk_api();
 
     // Log initial state
     let mut demo_state = DemoState::new();

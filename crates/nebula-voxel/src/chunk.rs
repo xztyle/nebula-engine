@@ -86,6 +86,16 @@ impl ChunkData {
         self.bit_width
     }
 
+    /// Resets the chunk to a uniform fill of the given voxel type.
+    ///
+    /// This is optimized to reset the palette to a single entry and clear
+    /// the bit-packed storage, avoiding 32,768 individual `set()` calls.
+    pub fn fill(&mut self, voxel: VoxelTypeId) {
+        self.palette = vec![voxel];
+        self.storage = BitPackedArray::new(0, CHUNK_VOLUME);
+        self.bit_width = 0;
+    }
+
     /// Returns approximate memory used by voxel index storage (bytes).
     pub fn storage_bytes(&self) -> usize {
         self.storage.storage_bytes()
