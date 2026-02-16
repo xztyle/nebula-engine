@@ -9,6 +9,7 @@ mod chunk_manager;
 mod components;
 mod input;
 mod lifecycle;
+pub mod query_patterns;
 mod render_context;
 mod schedule;
 mod system_ordering;
@@ -25,6 +26,10 @@ pub use chunk_manager::ChunkManager;
 pub use components::{Active, LocalPos, Name, Rotation, Scale, SpatialBundle, Velocity, WorldPos};
 pub use input::InputState;
 pub use lifecycle::{DespawnQueue, SpawnQueue, despawn_entity, flush_entity_queues, spawn_entity};
+pub use query_patterns::{
+    KnockbackEffect, MeshHandle, MovementQuery, Simulated, collect_entities, count_entities,
+    has_component, movement_system,
+};
 pub use render_context::RenderContext;
 pub use schedule::{EngineSchedule, EngineSchedules};
 pub use system_ordering::{
