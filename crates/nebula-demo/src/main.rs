@@ -3069,6 +3069,40 @@ fn demonstrate_connection_lifecycle() {
     info!("Connection lifecycle demonstration completed successfully");
 }
 
+fn demonstrate_network_compression() {
+    info!("Starting network compression demonstration");
+
+    let config = nebula_net::CompressionConfig::default();
+
+    // Simulate chunk data: 16K air + 8K stone + 8K dirt = 32KB
+    let mut chunk = Vec::with_capacity(32_768);
+    chunk.extend(std::iter::repeat_n(0x00u8, 16_384));
+    chunk.extend(std::iter::repeat_n(0x01u8, 8_192));
+    chunk.extend(std::iter::repeat_n(0x02u8, 8_192));
+
+    let payload = nebula_net::compress_payload(&chunk, &config);
+    let compressed_size = payload.len() - 1; // subtract flag byte
+    let ratio = ((1.0 - (compressed_size as f64 / chunk.len() as f64)) * 100.0) as u32;
+    info!(
+        "Compressed {}KB -> {}KB ({}%)",
+        chunk.len() / 1024,
+        compressed_size / 1024,
+        ratio,
+    );
+
+    // Verify roundtrip
+    let recovered = nebula_net::decompress_payload(&payload).unwrap();
+    assert_eq!(recovered, chunk);
+
+    // Small message stays uncompressed
+    let small = b"PlayerPosition update";
+    let small_payload = nebula_net::compress_payload(small, &config);
+    assert_eq!(small_payload[0], nebula_net::COMPRESSION_FLAG_NONE);
+    info!("Small message ({} bytes) sent uncompressed", small.len());
+
+    info!("Network compression demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -3575,6 +3609,9 @@ fn main() {
 
     // Demonstrate connection lifecycle
     demonstrate_connection_lifecycle();
+
+    // Demonstrate network compression
+    demonstrate_network_compression();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {
