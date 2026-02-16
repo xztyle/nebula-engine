@@ -244,38 +244,39 @@ impl ReplicationServerSystem {
 
             // Detect spawns and updates.
             for (&nid, components) in &current_entities {
-                if !shadow.entities.contains_key(&nid) {
-                    // New entity → spawn.
-                    msgs.spawns.push(SpawnEntity {
-                        network_id: NetworkId(nid),
-                        components: components.clone(),
-                    });
-                    // Update shadow.
-                    let mut comp_map = HashMap::new();
-                    for (tag, bytes) in components {
-                        comp_map.insert(tag.clone(), bytes.clone());
-                    }
-                    shadow.entities.insert(nid, comp_map);
-                } else {
-                    // Existing entity → delta check.
-                    let shadow_comps = shadow.entities.get_mut(&nid).expect("checked above");
-                    let mut changed = Vec::new();
-                    for (tag, bytes) in components {
-                        let is_changed = match shadow_comps.get(tag.as_str()) {
-                            Some(old) => old != bytes,
-                            None => true,
-                        };
-                        if is_changed {
-                            changed.push((tag.clone(), bytes.clone()));
-                            shadow_comps.insert(tag.clone(), bytes.clone());
-                        }
-                    }
-                    if !changed.is_empty() {
-                        msgs.updates.push(EntityUpdate {
+                use std::collections::hash_map::Entry;
+                match shadow.entities.entry(nid) {
+                    Entry::Vacant(vacant) => {
+                        // New entity → spawn.
+                        msgs.spawns.push(SpawnEntity {
                             network_id: NetworkId(nid),
-                            tick,
-                            changed_components: changed,
+                            components: components.clone(),
                         });
+                        let comp_map: HashMap<String, Vec<u8>> =
+                            components.iter().cloned().collect();
+                        vacant.insert(comp_map);
+                    }
+                    Entry::Occupied(mut occupied) => {
+                        // Existing entity → delta check.
+                        let shadow_comps = occupied.get_mut();
+                        let mut changed = Vec::new();
+                        for (tag, bytes) in components {
+                            let is_changed = match shadow_comps.get(tag.as_str()) {
+                                Some(old) => old != bytes,
+                                None => true,
+                            };
+                            if is_changed {
+                                changed.push((tag.clone(), bytes.clone()));
+                                shadow_comps.insert(tag.clone(), bytes.clone());
+                            }
+                        }
+                        if !changed.is_empty() {
+                            msgs.updates.push(EntityUpdate {
+                                network_id: NetworkId(nid),
+                                tick,
+                                changed_components: changed,
+                            });
+                        }
                     }
                 }
             }
@@ -334,8 +335,7 @@ impl ReplicationClientSystem {
         for update in &msgs.updates {
             if let Some(&entity) = self.net_to_local.get(&update.network_id.0) {
                 for (tag, bytes) in &update.changed_components {
-                    if let Some(desc) =
-                        rep_set.descriptors().iter().find(|d| d.tag == tag.as_str())
+                    if let Some(desc) = rep_set.descriptors().iter().find(|d| d.tag == tag.as_str())
                     {
                         (desc.deserializer)(world, entity, bytes);
                     }
@@ -345,10 +345,10 @@ impl ReplicationClientSystem {
 
         // Process despawns.
         for despawn in &msgs.despawns {
-            if let Some(entity) = self.net_to_local.remove(&despawn.network_id.0) {
-                if world.get_entity(entity).is_ok() {
-                    world.despawn(entity);
-                }
+            if let Some(entity) = self.net_to_local.remove(&despawn.network_id.0)
+                && world.get_entity(entity).is_ok()
+            {
+                world.despawn(entity);
             }
         }
     }

@@ -3371,6 +3371,83 @@ fn demonstrate_server_authoritative_state() {
     info!("Server-authoritative state demonstration completed successfully");
 }
 
+/// Demonstrates entity replication: spawn, delta updates, and despawn.
+fn demonstrate_entity_replication() {
+    use bevy_ecs::prelude::*;
+    use nebula_multiplayer::{ReplicationClientSystem, ReplicationServerSystem, ReplicationSet};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Component, Serialize, Deserialize, Clone, Debug)]
+    struct DemoPos {
+        x: i64,
+        y: i64,
+    }
+
+    info!("Starting entity replication demonstration");
+
+    // Set up replication.
+    let mut rep_set = ReplicationSet::new();
+    rep_set.register::<DemoPos>("DemoPos");
+
+    let mut server_sys = ReplicationServerSystem::new();
+    server_sys.add_client(1);
+
+    let mut server_world = World::new();
+    let net_id = server_sys.allocate_network_id();
+    let entity = server_world
+        .spawn((net_id, DemoPos { x: 100, y: 200 }))
+        .id();
+
+    // Tick 1: spawn replication.
+    let msgs = server_sys.replicate(&server_world, &rep_set, 1);
+    let client_msgs = &msgs[&1];
+    info!(
+        "Tick 1: {} spawns, {} updates, {} despawns",
+        client_msgs.spawns.len(),
+        client_msgs.updates.len(),
+        client_msgs.despawns.len()
+    );
+
+    let mut client_world = World::new();
+    let mut client_sys = ReplicationClientSystem::new();
+    client_sys.apply(&mut client_world, &rep_set, client_msgs);
+    info!("Client received spawn for NetworkId({})", net_id.0);
+
+    // Tick 2: modify position → delta update.
+    server_world.get_mut::<DemoPos>(entity).unwrap().x = 999;
+    let msgs = server_sys.replicate(&server_world, &rep_set, 2);
+    let client_msgs = &msgs[&1];
+    info!(
+        "Tick 2: {} spawns, {} updates, {} despawns",
+        client_msgs.spawns.len(),
+        client_msgs.updates.len(),
+        client_msgs.despawns.len()
+    );
+
+    // Tick 3: no changes → empty.
+    let msgs = server_sys.replicate(&server_world, &rep_set, 3);
+    let client_msgs = &msgs[&1];
+    info!(
+        "Tick 3 (no change): {} spawns, {} updates, {} despawns",
+        client_msgs.spawns.len(),
+        client_msgs.updates.len(),
+        client_msgs.despawns.len()
+    );
+
+    // Tick 4: despawn.
+    server_world.despawn(entity);
+    let msgs = server_sys.replicate(&server_world, &rep_set, 4);
+    let client_msgs = &msgs[&1];
+    info!(
+        "Tick 4 (despawn): {} spawns, {} updates, {} despawns",
+        client_msgs.spawns.len(),
+        client_msgs.updates.len(),
+        client_msgs.despawns.len()
+    );
+
+    info!("Entity replication demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -3909,6 +3986,9 @@ fn main() {
 
     // Demonstrate server-authoritative state
     demonstrate_server_authoritative_state();
+
+    // Demonstrate entity replication
+    demonstrate_entity_replication();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {

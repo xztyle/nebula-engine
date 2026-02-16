@@ -35,3 +35,4 @@ nebula-physics = { path = "../nebula-physics" }
 rapier3d = "0.32"
 nebula-net = { path = "../nebula-net" }
 nebula-multiplayer = { path = "../nebula-multiplayer" }
+serde = { workspace = true }
