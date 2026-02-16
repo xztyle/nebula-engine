@@ -2720,6 +2720,78 @@ fn demonstrate_physics_bridge() {
     info!("Physics bridge demonstration completed successfully");
 }
 
+/// Demonstrates voxel raycasting: crosshair ray finds targeted voxel.
+fn demonstrate_voxel_raycast() {
+    use nebula_physics::{BlockTarget, VoxelData, VoxelRay, VoxelWorldAccess, voxel_raycast};
+
+    info!("Starting voxel raycasting demonstration");
+
+    // Simple inline world for demo purposes.
+    struct DemoVoxelWorld;
+    impl VoxelWorldAccess for DemoVoxelWorld {
+        fn get_voxel(&self, pos: &WorldPosition) -> Option<VoxelData> {
+            // Solid stone floor at y=0, air everywhere else.
+            if pos.y == 0 {
+                Some(VoxelData {
+                    id: VoxelTypeId(1),
+                    solid: true,
+                })
+            } else {
+                Some(VoxelData {
+                    id: VoxelTypeId(0),
+                    solid: false,
+                })
+            }
+        }
+    }
+
+    let world = DemoVoxelWorld;
+
+    // Crosshair ray: player at (0, 5, 0) looking down at -Y.
+    let ray = VoxelRay {
+        origin: WorldPosition::new(0, 5, 0),
+        sub_offset: glam::Vec3::new(0.5, 0.5, 0.5),
+        direction: glam::Vec3::NEG_Y,
+        max_distance: 8.0,
+        skip_origin: false,
+    };
+
+    let target = BlockTarget {
+        hit: voxel_raycast(&ray, &world),
+    };
+
+    if let Some(ref hit) = target.hit {
+        info!(
+            "Crosshair target: voxel=({},{},{}), face=({},{},{}), dist={:.2}, type={}",
+            hit.voxel_pos.x,
+            hit.voxel_pos.y,
+            hit.voxel_pos.z,
+            hit.face_normal.x,
+            hit.face_normal.y,
+            hit.face_normal.z,
+            hit.distance,
+            hit.voxel_type.0,
+        );
+        assert_eq!(hit.voxel_pos, WorldPosition::new(0, 0, 0));
+        assert_eq!(hit.face_normal, glam::IVec3::new(0, 1, 0));
+    } else {
+        panic!("Crosshair ray should hit the floor");
+    }
+
+    // Ray that misses (looking up into empty sky).
+    let ray_up = VoxelRay {
+        origin: WorldPosition::new(0, 5, 0),
+        sub_offset: glam::Vec3::new(0.5, 0.5, 0.5),
+        direction: glam::Vec3::Y,
+        max_distance: 8.0,
+        skip_origin: false,
+    };
+    assert!(voxel_raycast(&ray_up, &world).is_none());
+    info!("Upward ray correctly misses (no solid above)");
+
+    info!("Voxel raycasting demonstration completed successfully");
+}
+
 /// Configure system ordering constraints for all engine stages.
 fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
@@ -2950,6 +3022,9 @@ fn main() {
 
     // Demonstrate player character physics
     demonstrate_player_physics();
+
+    // Demonstrate voxel raycasting
+    demonstrate_voxel_raycast();
 
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
