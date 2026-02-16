@@ -64,7 +64,7 @@ impl OceanRenderer {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: std::num::NonZeroU64::new(64),
+                        min_binding_size: std::num::NonZeroU64::new(80),
                     },
                     count: None,
                 }],
@@ -167,7 +167,7 @@ impl OceanRenderer {
 
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("ocean-camera-uniform"),
-            contents: &[0u8; 64],
+            contents: &[0u8; 80],
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 

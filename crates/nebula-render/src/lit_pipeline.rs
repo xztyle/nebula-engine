@@ -73,6 +73,16 @@ impl LitPipeline {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: NonZeroU64::new(32), // LightingContextUniform
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -254,6 +264,11 @@ struct ShadowUniforms {
     _pad2: u32,
 };
 
+struct LightingCtx {
+    ambient_shadow: vec4<f32>,
+    atmosphere_padding: vec4<f32>,
+};
+
 struct PbrMaterial {
     albedo_metallic: vec4<f32>,
     roughness_ao_pad: vec4<f32>,
@@ -268,6 +283,9 @@ var<uniform> sun: DirectionalLight;
 
 @group(1) @binding(1)
 var<storage, read> point_lights: PointLightBuffer;
+
+@group(1) @binding(2)
+var<uniform> lighting_ctx: LightingCtx;
 
 @group(2) @binding(0)
 var<uniform> shadow_uniforms: ShadowUniforms;
@@ -424,8 +442,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let roughness = material.roughness_ao_pad.x;
     let ao = material.roughness_ao_pad.y;
 
-    // Shadow factor.
-    let shadow = blended_shadow_factor(in.world_position, view_depth);
+    // Shadow factor: apply shadow_min_light from lighting context.
+    // In space, shadow_min_light=0 → pure black shadows.
+    // On surface, shadow_min_light>0 → softly lit shadows.
+    let raw_shadow = blended_shadow_factor(in.world_position, view_depth);
+    let shadow = max(raw_shadow, lighting_ctx.ambient_shadow.w);
 
     // Directional light (sun) PBR contribution.
     let sun_dir = -sun.direction_intensity.xyz;
@@ -445,8 +466,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                * light.color_intensity.xyz * light.color_intensity.w * atten;
     }
 
-    // Ambient term (simple; IBL comes later).
-    let ambient = vec3<f32>(0.03) * albedo * ao;
+    // Ambient term: uses lighting context (space=0, surface=atmospheric fill).
+    let ambient = lighting_ctx.ambient_shadow.xyz * albedo * ao;
     color += ambient;
 
     // Add emissive output (self-illumination, can produce HDR values > 1.0 for bloom).

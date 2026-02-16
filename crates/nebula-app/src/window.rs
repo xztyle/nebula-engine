@@ -12,8 +12,9 @@ use bytemuck;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
 use nebula_lighting::{
-    CascadedShadowConfig, CascadedShadowMaps, DirectionalLight, PointLight, PointLightFrustum,
-    PointLightManager,
+    CascadedShadowConfig, CascadedShadowMaps, DirectionalLight, LightingAtmosphereConfig,
+    LightingContext, PointLight, PointLightFrustum, PointLightManager,
+    lighting_context_at_altitude, modulate_ambient_by_sun,
 };
 use nebula_planet::{
     AtmosphereParams, AtmosphereRenderer, DayNightState, ImpostorConfig, ImpostorRenderer,
@@ -201,6 +202,12 @@ pub struct AppState {
     pub material_buffer: Option<wgpu::Buffer>,
     /// Bind group for PBR material uniform (group 3).
     pub material_bind_group: Option<wgpu::BindGroup>,
+    /// Space vs surface lighting context.
+    pub lighting_context: LightingContext,
+    /// Atmosphere config for altitude-based lighting transition.
+    pub lighting_atmo_config: LightingAtmosphereConfig,
+    /// GPU buffer for lighting context uniform.
+    pub lighting_context_buffer: Option<wgpu::Buffer>,
 }
 
 impl AppState {
@@ -275,6 +282,9 @@ impl AppState {
             pbr_material: nebula_lighting::PbrMaterial::stone(),
             material_buffer: None,
             material_bind_group: None,
+            lighting_context: LightingContext::earth_like_surface(),
+            lighting_atmo_config: LightingAtmosphereConfig::default(),
+            lighting_context_buffer: None,
         }
     }
 
@@ -356,6 +366,9 @@ impl AppState {
             pbr_material: nebula_lighting::PbrMaterial::stone(),
             material_buffer: None,
             material_bind_group: None,
+            lighting_context: LightingContext::earth_like_surface(),
+            lighting_atmo_config: LightingAtmosphereConfig::default(),
+            lighting_context_buffer: None,
         }
     }
 
@@ -800,6 +813,16 @@ impl AppState {
         gpu.queue
             .write_buffer(&point_light_buffer, 0, bytemuck::cast_slice(&[zero_header]));
 
+        // Create lighting context uniform buffer.
+        let lighting_ctx_uniform = self.lighting_context.to_uniform();
+        let lighting_context_buffer =
+            gpu.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("lighting-context-uniform"),
+                    contents: bytemuck::cast_slice(&[lighting_ctx_uniform]),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
+
         let light_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("directional-light-bind-group"),
             layout: &planet_pipeline.light_bind_group_layout,
@@ -812,11 +835,16 @@ impl AppState {
                     binding: 1,
                     resource: point_light_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: lighting_context_buffer.as_entire_binding(),
+                },
             ],
         });
         self.light_buffer = Some(light_buffer);
         self.light_bind_group = Some(light_bind_group);
         self.point_light_buffer = Some(point_light_buffer);
+        self.lighting_context_buffer = Some(lighting_context_buffer);
 
         // --- Cascaded Shadow Maps ---
         self.initialize_shadow_maps(gpu, &mut shader_library, &planet_pipeline);
@@ -1723,6 +1751,27 @@ impl ApplicationHandler for AppState {
                                             lb,
                                             0,
                                             bytemuck::cast_slice(&[light_u]),
+                                        );
+                                    }
+
+                                    // Update space vs surface lighting context.
+                                    let surface_ctx = LightingContext::earth_like_surface();
+                                    let mut ctx = lighting_context_at_altitude(
+                                        self.simulated_altitude,
+                                        &self.lighting_atmo_config,
+                                        &surface_ctx,
+                                    );
+                                    // Modulate ambient by sun elevation (day/night).
+                                    let sun_elev = self.day_night.sun_direction.y;
+                                    ctx.ambient_color =
+                                        modulate_ambient_by_sun(ctx.ambient_color, sun_elev);
+                                    self.lighting_context = ctx.clone();
+                                    if let Some(lcb) = &self.lighting_context_buffer {
+                                        let lcu = ctx.to_uniform();
+                                        gpu.queue.write_buffer(
+                                            lcb,
+                                            0,
+                                            bytemuck::cast_slice(&[lcu]),
                                         );
                                     }
 

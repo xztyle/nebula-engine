@@ -5,6 +5,7 @@ mod directional;
 pub mod pbr;
 mod point;
 mod shadow;
+pub mod space_surface;
 pub mod voxel_light;
 
 pub use cross_chunk::{
@@ -19,6 +20,10 @@ pub use point::{
 pub use shadow::{
     CascadedShadowConfig, CascadedShadowMaps, ShadowUniform, compute_cascade_matrix,
     compute_cascade_matrix_from_camera,
+};
+pub use space_surface::{
+    AtmosphereConfig as LightingAtmosphereConfig, LightingContext, LightingContextUniform,
+    lighting_context_at_altitude, modulate_ambient_by_sun,
 };
 pub use voxel_light::{
     ChunkLightMap, VoxelLight, collect_emissive_sources, propagate_block_light, propagate_sunlight,
