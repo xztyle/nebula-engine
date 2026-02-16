@@ -8,8 +8,9 @@ use clap::Parser;
 use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
 use nebula_cubesphere::{
-    ChunkAddress, CubeFace, FaceCoord, FaceDirection, FaceQuadtree, LodNeighbor, SameFaceNeighbor,
-    direction_to_face, face_coord_to_sphere_everitt, sphere_to_face_coord_everitt,
+    ChunkAddress, CubeCorner, CubeFace, FaceCoord, FaceDirection, FaceQuadtree, LodNeighbor,
+    SameFaceNeighbor, corner_lod_valid, direction_to_face, face_coord_to_sphere_everitt,
+    sphere_to_face_coord_everitt,
 };
 use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
 use rand::{Rng, SeedableRng};
@@ -430,6 +431,55 @@ fn demonstrate_neighbor_finding() {
     info!("Same-face neighbor finding demonstration completed successfully");
 }
 
+/// Demonstrates cross-face corner neighbor finding at cube corners.
+fn demonstrate_corner_neighbors() {
+    info!("Starting cross-face corner neighbor demonstration");
+
+    let mut corners_found = 0;
+    let lod = 10;
+    let grid = ChunkAddress::grid_size(lod);
+
+    // Check all 4 corners of PosX face
+    let corner_coords = [(0, 0), (grid - 1, 0), (0, grid - 1), (grid - 1, grid - 1)];
+    for (x, y) in corner_coords {
+        let addr = ChunkAddress::new(CubeFace::PosX, lod, x, y);
+        if let Some(neighbors) = addr.corner_neighbors() {
+            corners_found += 1;
+            info!(
+                "  Corner {:?}: {} neighbors on {:?} and {:?}",
+                neighbors.corner, addr, neighbors.neighbor_a.face, neighbors.neighbor_b.face,
+            );
+        }
+    }
+    info!("Found {corners_found} corner adjacencies on PosX face");
+
+    // Verify all 8 cube corners have consistent 3-face meetings
+    for corner in CubeCorner::ALL {
+        let faces = corner.faces();
+        let pos = corner.position();
+        info!(
+            "  Corner {:?} at ({:.0},{:.0},{:.0}): faces {:?}, {:?}, {:?}",
+            corner, pos.x, pos.y, pos.z, faces[0], faces[1], faces[2]
+        );
+    }
+
+    // Demonstrate LOD validation at corners
+    let a = ChunkAddress::new(CubeFace::PosX, 10, 0, 0);
+    let b = ChunkAddress::new(CubeFace::PosY, 10, 0, 0);
+    let c = ChunkAddress::new(CubeFace::PosZ, 10, 0, 0);
+    let same_lod_valid = corner_lod_valid(&a, &b, &c);
+
+    let c_bad = ChunkAddress::new(CubeFace::PosZ, 12, 0, 0);
+    let big_gap_valid = corner_lod_valid(&a, &b, &c_bad);
+
+    info!(
+        "LOD validation: same LOD={}, gap of 2={}",
+        same_lod_valid, big_gap_valid
+    );
+
+    info!("Cross-face corner neighbor demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -468,6 +518,9 @@ fn main() {
 
     // Demonstrate same-face neighbor finding
     demonstrate_neighbor_finding();
+
+    // Demonstrate cross-face corner neighbors
+    demonstrate_corner_neighbors();
 
     // Log initial state
     let mut demo_state = DemoState::new();
