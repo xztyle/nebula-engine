@@ -12,9 +12,10 @@ use bytemuck;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
 use nebula_planet::{
-    AtmosphereParams, AtmosphereRenderer, DayNightState, LocalFrustum, OceanParams, OceanRenderer,
-    OrbitalRenderer, OriginManager, PlanetFaces, TransitionConfig, chunk_budget_for_altitude,
-    create_orbit_camera, generate_orbital_sphere,
+    AtmosphereParams, AtmosphereRenderer, DayNightState, ImpostorConfig, ImpostorRenderer,
+    ImpostorState, LocalFrustum, OceanParams, OceanRenderer, OrbitalRenderer, OriginManager,
+    PlanetFaces, TransitionConfig, chunk_budget_for_altitude, create_orbit_camera,
+    generate_orbital_sphere, impostor_quad_size,
 };
 use nebula_render::{
     BufferAllocator, Camera, CameraUniform, DepthBuffer, FrameEncoder, IndexData, MeshBuffer,
@@ -143,6 +144,12 @@ pub struct AppState {
     pub chunk_budget: u32,
     /// Simulated camera altitude above planet surface (meters).
     pub simulated_altitude: f64,
+    /// Planet impostor renderer (billboard for extreme distances).
+    pub impostor_renderer: Option<ImpostorRenderer>,
+    /// Impostor state tracking (view/sun direction for re-rendering).
+    pub impostor_state: ImpostorState,
+    /// Impostor configuration.
+    pub impostor_config: ImpostorConfig,
 }
 
 impl AppState {
@@ -194,6 +201,9 @@ impl AppState {
             transition_blend: 0.0,
             chunk_budget: 4096,
             simulated_altitude: 0.0,
+            impostor_renderer: None,
+            impostor_state: ImpostorState::new(0.05),
+            impostor_config: ImpostorConfig::default(),
         }
     }
 
@@ -252,6 +262,9 @@ impl AppState {
             transition_blend: 0.0,
             chunk_budget: 4096,
             simulated_altitude: 0.0,
+            impostor_renderer: None,
+            impostor_state: ImpostorState::new(0.05),
+            impostor_config: ImpostorConfig::default(),
         }
     }
 
@@ -458,6 +471,19 @@ impl AppState {
 
         // --- Orbital planet renderer ---
         self.initialize_orbital_renderer(gpu, planet_radius);
+
+        // --- Planet impostor renderer (billboard for extreme distances) ---
+        let impostor = ImpostorRenderer::new(
+            &gpu.device,
+            &gpu.queue,
+            gpu.surface_format,
+            self.impostor_config.texture_resolution,
+        );
+        info!(
+            "Impostor renderer initialized: {}x{} texture",
+            self.impostor_config.texture_resolution, self.impostor_config.texture_resolution
+        );
+        self.impostor_renderer = Some(impostor);
 
         // --- Ocean surface renderer ---
         self.initialize_ocean_renderer(gpu, planet_radius);
@@ -904,6 +930,66 @@ impl ApplicationHandler for AppState {
                                     if render_orbital {
                                         orbital.render(&mut pass);
                                     }
+                                }
+                            }
+
+                            // === Pass 0.5: Impostor billboard for a distant planet ===
+                            if let (Some(impostor), Some(depth_buffer)) =
+                                (&self.impostor_renderer, &self.depth_buffer)
+                            {
+                                let aspect = self.surface_width() as f32
+                                    / self.surface_height().max(1) as f32;
+                                let orbit_angle = self.camera_time * 0.3;
+                                let planet_radius = self
+                                    .planet_faces
+                                    .as_ref()
+                                    .map(|p| p.planet_radius as f32)
+                                    .unwrap_or(200.0);
+                                let altitude = planet_radius * 3.0;
+                                let vp = create_orbit_camera(
+                                    planet_radius,
+                                    altitude,
+                                    orbit_angle,
+                                    0.4,
+                                    aspect,
+                                );
+
+                                // Place a distant "second planet" off to the side
+                                let distant_center = glam::Vec3::new(planet_radius * 8.0, 0.0, 0.0);
+                                let cam_dist_f64 = planet_radius as f64 + altitude as f64;
+                                let cam_pos = glam::Vec3::new(
+                                    (orbit_angle.cos() * 0.4_f64.cos() * cam_dist_f64) as f32,
+                                    (0.4_f64.sin() * cam_dist_f64) as f32,
+                                    (orbit_angle.sin() * 0.4_f64.cos() * cam_dist_f64) as f32,
+                                );
+
+                                // Camera basis vectors for billboard orientation
+                                let to_planet = (distant_center - cam_pos).normalize();
+                                let cam_right = to_planet.cross(glam::Vec3::Y).normalize();
+                                let cam_up = cam_right.cross(to_planet).normalize();
+
+                                let dist_to_planet = (distant_center - cam_pos).length() as f64;
+                                let half_size =
+                                    impostor_quad_size(planet_radius as f64 * 0.5, dist_to_planet)
+                                        / 2.0;
+
+                                impostor.update(
+                                    &gpu.queue,
+                                    vp,
+                                    distant_center,
+                                    cam_right,
+                                    cam_up,
+                                    half_size,
+                                );
+
+                                let pb = RenderPassBuilder::new()
+                                    .preserve_color()
+                                    .depth(depth_buffer.view.clone(), DepthBuffer::CLEAR_VALUE)
+                                    .preserve_depth()
+                                    .label("impostor-pass");
+                                {
+                                    let mut pass = frame_encoder.begin_render_pass(&pb);
+                                    impostor.render(&mut pass);
                                 }
                             }
 

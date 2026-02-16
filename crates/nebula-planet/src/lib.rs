@@ -3,6 +3,7 @@
 pub mod atmosphere;
 mod culling;
 pub mod day_night;
+pub mod impostor;
 pub mod ocean;
 pub mod orbital;
 mod origin;
@@ -15,6 +16,11 @@ pub use culling::{CullResult, LocalFrustum, PlanetBounds};
 pub use day_night::{
     DayNightClock, DayNightState, ambient_intensity, star_visibility, sun_color,
     sun_direction_from_time, sun_intensity_curve,
+};
+pub use impostor::{
+    IMPOSTOR_INDICES, ImpostorConfig, ImpostorPipeline, ImpostorRenderer, ImpostorState,
+    ImpostorVertex, PlanetRepresentation, billboard_vertices, impostor_quad_size,
+    select_planet_representation,
 };
 pub use ocean::{
     OceanParams, OceanRenderer, OceanUniform, compute_water_color, compute_wave_displacement,
