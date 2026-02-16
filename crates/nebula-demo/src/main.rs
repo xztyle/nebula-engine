@@ -2881,6 +2881,14 @@ fn main() {
     };
     let mut cam_rotation = nebula_ecs::Rotation::default();
 
+    // Spaceship controller for 6DOF flight mode (toggle with F5).
+    let spaceship = nebula_player::SpaceshipController {
+        thrust: 500, // 500 mm/tick² for demo visibility
+        ..Default::default()
+    };
+    let mut ship_velocity = nebula_ecs::Velocity::default();
+    let mut spaceship_mode = false;
+
     // Third-person camera: follows a placeholder "player" entity.
     let mut tps_camera = nebula_player::ThirdPersonCamera::default();
     let player_target_pos = nebula_ecs::WorldPos::new(1_000_000, 2_000_000, 500_000);
@@ -2941,7 +2949,10 @@ fn main() {
         context_stack.resolve(kb, ms, gamepad, &mut action_state);
 
         // First-person look: mouse delta → yaw/pitch → rotation quaternion.
-        nebula_player::first_person_look_system(ms, &mut fps_camera, &mut cam_rotation);
+        // (Skipped in spaceship mode; spaceship_rotation_system handles it.)
+        if !spaceship_mode {
+            nebula_player::first_person_look_system(ms, &mut fps_camera, &mut cam_rotation);
+        }
 
         // Gamepad right stick rotates view.
         let stick_sensitivity = 2.0_f32; // radians per second at full tilt
@@ -2963,10 +2974,46 @@ fn main() {
             fps_camera.pitch,
         );
 
-        // Camera movement via first-person move system (WASD relative to facing).
+        // F5 toggles spaceship mode on; F6 toggles it off.
+        if kb.is_pressed(winit::keyboard::PhysicalKey::Code(
+            winit::keyboard::KeyCode::F5,
+        )) && !spaceship_mode
+        {
+            spaceship_mode = true;
+            ship_velocity = nebula_ecs::Velocity::default();
+            tracing::info!(
+                "Spaceship mode ON — 6DOF flight, speed: {:.1} m/s",
+                nebula_player::SpaceshipController::speed_ms(&ship_velocity, 60.0)
+            );
+        }
+        if kb.is_pressed(winit::keyboard::PhysicalKey::Code(
+            winit::keyboard::KeyCode::F6,
+        )) && spaceship_mode
+        {
+            spaceship_mode = false;
+            tracing::info!("Spaceship mode OFF — first-person camera");
+        }
+
+        // Camera movement: spaceship 6DOF or first-person walk.
         {
             let mut world_pos = nebula_ecs::WorldPos(demo_state.position);
-            nebula_player::first_person_move_system(kb, &fps_camera, &cam_rotation, &mut world_pos);
+            if spaceship_mode {
+                nebula_player::spaceship_rotation_system(ms, kb, &spaceship, &mut cam_rotation);
+                nebula_player::spaceship_thrust_system(
+                    kb,
+                    &spaceship,
+                    &cam_rotation,
+                    &mut ship_velocity,
+                );
+                nebula_player::apply_velocity_system(&ship_velocity, &mut world_pos);
+            } else {
+                nebula_player::first_person_move_system(
+                    kb,
+                    &fps_camera,
+                    &cam_rotation,
+                    &mut world_pos,
+                );
+            }
             demo_state.position = world_pos.0;
         }
 
