@@ -25,6 +25,7 @@ pub struct DepthAttachmentConfig {
 #[derive(Debug)]
 pub struct RenderPassBuilder {
     clear_color: wgpu::Color,
+    load_color: bool,
     depth_attachment: Option<DepthAttachmentConfig>,
     msaa_resolve_target: Option<wgpu::TextureView>,
     label: Option<&'static str>,
@@ -41,10 +42,17 @@ impl RenderPassBuilder {
     pub fn new() -> Self {
         Self {
             clear_color: SKY_BLUE,
+            load_color: false,
             depth_attachment: None,
             msaa_resolve_target: None,
             label: None,
         }
+    }
+
+    /// Preserve existing color attachment contents instead of clearing.
+    pub fn preserve_color(mut self) -> Self {
+        self.load_color = true;
+        self
     }
 
     /// Set the clear color for the color attachment.
@@ -97,11 +105,16 @@ impl RenderPassBuilder {
         encoder: &'encoder mut wgpu::CommandEncoder,
         color_view: &'encoder wgpu::TextureView,
     ) -> wgpu::RenderPass<'encoder> {
+        let color_load = if self.load_color {
+            wgpu::LoadOp::Load
+        } else {
+            wgpu::LoadOp::Clear(self.clear_color)
+        };
         let color_attachment = wgpu::RenderPassColorAttachment {
             view: color_view,
             resolve_target: self.msaa_resolve_target.as_ref(),
             ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(self.clear_color),
+                load: color_load,
                 store: wgpu::StoreOp::Store,
             },
             depth_slice: None,

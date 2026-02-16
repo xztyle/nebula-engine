@@ -11,10 +11,11 @@ use crate::game_loop::GameLoop;
 use bytemuck;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
+use nebula_planet::{SingleFaceLoader, build_face_render_data, create_face_camera};
 use nebula_render::{
-    BufferAllocator, Camera, DepthBuffer, FrameEncoder, IndexData, MeshBuffer, RenderContext,
-    RenderPassBuilder, ShaderLibrary, SurfaceWrapper, TEXTURED_SHADER_SOURCE, TextureManager,
-    TexturedPipeline, UNLIT_SHADER_SOURCE, UnlitPipeline, VertexPositionColor,
+    BufferAllocator, Camera, CameraUniform, DepthBuffer, FrameEncoder, IndexData, MeshBuffer,
+    RenderContext, RenderPassBuilder, ShaderLibrary, SurfaceWrapper, TEXTURED_SHADER_SOURCE,
+    TextureManager, TexturedPipeline, UNLIT_SHADER_SOURCE, UnlitPipeline, VertexPositionColor,
     VertexPositionNormalUv, draw_textured, draw_unlit, init_render_context_blocking,
 };
 use tracing::{error, info, instrument, warn};
@@ -106,6 +107,14 @@ pub struct AppState {
     pub textured_camera_bind_group: Option<wgpu::BindGroup>,
     /// Cube-face quad meshes (six faces, each a distinct color).
     pub cube_face_meshes: Vec<MeshBuffer>,
+    /// Planet single-face terrain mesh (cubesphere-displaced).
+    pub planet_face_mesh: Option<MeshBuffer>,
+    /// Camera buffer for the planet face view.
+    pub planet_camera_buffer: Option<wgpu::Buffer>,
+    /// Camera bind group for the planet face view.
+    pub planet_camera_bind_group: Option<wgpu::BindGroup>,
+    /// No-cull unlit pipeline for planet terrain (winding may flip on cubesphere).
+    pub planet_pipeline: Option<UnlitPipeline>,
 }
 
 impl AppState {
@@ -141,6 +150,10 @@ impl AppState {
             checkerboard_texture: None,
             textured_camera_bind_group: None,
             cube_face_meshes: Vec::new(),
+            planet_face_mesh: None,
+            planet_camera_buffer: None,
+            planet_camera_bind_group: None,
+            planet_pipeline: None,
         }
     }
 
@@ -183,6 +196,10 @@ impl AppState {
             checkerboard_texture: None,
             textured_camera_bind_group: None,
             cube_face_meshes: Vec::new(),
+            planet_face_mesh: None,
+            planet_camera_buffer: None,
+            planet_camera_bind_group: None,
+            planet_pipeline: None,
         }
     }
 
@@ -372,6 +389,9 @@ impl AppState {
         self.checkerboard_texture = Some(managed_tex);
         self.textured_camera_bind_group = Some(textured_camera_bind_group);
 
+        // --- Single face planet terrain (before moving unlit_pipeline) ---
+        self.initialize_planet_face(gpu, &allocator, &unlit_pipeline);
+
         self.unlit_pipeline = Some(unlit_pipeline);
         self.triangle_mesh = Some(triangle_mesh);
         self.back_triangle_mesh = Some(back_triangle_mesh);
@@ -383,8 +403,82 @@ impl AppState {
         self.cube_face_meshes = create_cube_face_meshes(&allocator);
 
         info!(
-            "Rendering pipeline initialized successfully with depth buffer, textured quad, and cube faces"
+            "Rendering pipeline initialized successfully with depth buffer, textured quad, cube faces, and planet face"
         );
+    }
+
+    /// Initialize planet single-face terrain rendering.
+    fn initialize_planet_face(
+        &mut self,
+        gpu: &RenderContext,
+        allocator: &BufferAllocator,
+        _unlit_pipeline: &UnlitPipeline,
+    ) {
+        use nebula_cubesphere::CubeFace;
+        use wgpu::util::DeviceExt;
+
+        // Create a no-cull pipeline for planet terrain (cubesphere displacement can flip winding)
+        let mut shader_library = ShaderLibrary::new();
+        let shader = shader_library
+            .load_from_source(&gpu.device, "planet-unlit", UNLIT_SHADER_SOURCE)
+            .expect("Failed to load planet shader");
+        let planet_pipeline = create_no_cull_pipeline(
+            &gpu.device,
+            &shader,
+            gpu.surface_format,
+            Some(DepthBuffer::FORMAT),
+        );
+
+        let loader = SingleFaceLoader::new_demo(CubeFace::PosY, 3, 42);
+        let planet_radius = loader.planet_radius;
+        let voxel_size = loader.voxel_size;
+        let chunks = loader.load_and_mesh();
+        let render_data = build_face_render_data(&chunks, planet_radius, voxel_size);
+
+        if render_data.vertices.is_empty() {
+            info!("Planet face: no vertices generated");
+            return;
+        }
+
+        let mesh = allocator.create_mesh(
+            "planet-face",
+            bytemuck::cast_slice(&render_data.vertices),
+            IndexData::U32(&render_data.indices),
+        );
+
+        let aspect = self.surface_width() as f32 / self.surface_height().max(1) as f32;
+        let vp = create_face_camera(CubeFace::PosY, planet_radius as f32, 30.0, aspect);
+        let uniform = CameraUniform {
+            view_proj: vp.to_cols_array_2d(),
+        };
+
+        let buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("planet-camera-uniform"),
+                contents: bytemuck::cast_slice(&[uniform]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
+        let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("planet-camera-bind-group"),
+            layout: &planet_pipeline.camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+
+        info!(
+            "Planet face initialized: {} vertices, {} triangles",
+            render_data.vertices.len(),
+            render_data.indices.len() / 3
+        );
+
+        self.planet_face_mesh = Some(mesh);
+        self.planet_camera_buffer = Some(buffer);
+        self.planet_camera_bind_group = Some(bind_group);
+        self.planet_pipeline = Some(planet_pipeline);
     }
 
     /// Updates the debug state with current frame metrics.
@@ -615,25 +709,82 @@ impl ApplicationHandler for AppState {
                                 surface_texture,
                             );
 
-                            // Create render pass builder with depth buffer
-                            let pass_builder = if let Some(depth_buffer) = &self.depth_buffer {
-                                RenderPassBuilder::new()
+                            // === Pass 1: Planet face terrain (clears to space blue) ===
+                            if let (
+                                Some(pipeline),
+                                Some(bind_group),
+                                Some(planet_mesh),
+                                Some(depth_buffer),
+                            ) = (
+                                &self.planet_pipeline,
+                                &self.planet_camera_bind_group,
+                                &self.planet_face_mesh,
+                                &self.depth_buffer,
+                            ) {
+                                // Update planet camera to orbit above +Y face
+                                if let Some(planet_buf) = &self.planet_camera_buffer {
+                                    let aspect = self.surface_width() as f32
+                                        / self.surface_height().max(1) as f32;
+                                    let orbit_angle = self.camera_time * 0.3;
+                                    let planet_radius = 200.0_f32;
+                                    let altitude = 80.0_f32;
+
+                                    let orbit_tilt = 0.4_f32;
+                                    let eye = glam::Vec3::new(
+                                        (orbit_angle.sin() as f32) * orbit_tilt * altitude,
+                                        planet_radius + altitude,
+                                        (orbit_angle.cos() as f32) * orbit_tilt * altitude,
+                                    );
+                                    let target = glam::Vec3::new(0.0, planet_radius, 0.0);
+                                    let up = glam::Vec3::Z;
+                                    let view = glam::Mat4::look_at_rh(eye, target, up);
+                                    let proj = glam::Mat4::perspective_rh(
+                                        70.0_f32.to_radians(),
+                                        aspect,
+                                        0.5,
+                                        1000.0,
+                                    );
+                                    let vp = proj * view;
+                                    let uniform = CameraUniform {
+                                        view_proj: vp.to_cols_array_2d(),
+                                    };
+                                    gpu.queue.write_buffer(
+                                        planet_buf,
+                                        0,
+                                        bytemuck::cast_slice(&[uniform]),
+                                    );
+                                }
+
+                                let planet_pass_builder = RenderPassBuilder::new()
                                     .clear_color(clear_color)
                                     .depth(depth_buffer.view.clone(), DepthBuffer::CLEAR_VALUE)
-                                    .label("depth-test-pass")
+                                    .label("planet-face-pass");
+
+                                {
+                                    let mut planet_pass =
+                                        frame_encoder.begin_render_pass(&planet_pass_builder);
+                                    draw_unlit(&mut planet_pass, pipeline, bind_group, planet_mesh);
+                                }
+                            }
+
+                            // === Pass 2: Demo scene (preserves planet, clears depth) ===
+                            let pass_builder = if let Some(depth_buffer) = &self.depth_buffer {
+                                RenderPassBuilder::new()
+                                    .preserve_color()
+                                    .depth(depth_buffer.view.clone(), DepthBuffer::CLEAR_VALUE)
+                                    .label("demo-scene-pass")
                             } else {
-                                RenderPassBuilder::new().clear_color(clear_color)
+                                RenderPassBuilder::new().preserve_color()
                             };
 
                             {
                                 let mut render_pass =
                                     frame_encoder.begin_render_pass(&pass_builder);
 
-                                // Render both triangles if we have all the required resources
+                                // Render both triangles
                                 if let (Some(pipeline), Some(bind_group)) =
                                     (&self.unlit_pipeline, &self.camera_bind_group)
                                 {
-                                    // Render the back triangle first (farther away)
                                     if let Some(back_mesh) = &self.back_triangle_mesh {
                                         draw_unlit(
                                             &mut render_pass,
@@ -643,7 +794,6 @@ impl ApplicationHandler for AppState {
                                         );
                                     }
 
-                                    // Render the front triangle second (closer)
                                     if let Some(front_mesh) = &self.triangle_mesh {
                                         draw_unlit(
                                             &mut render_pass,
@@ -654,7 +804,7 @@ impl ApplicationHandler for AppState {
                                     }
                                 }
 
-                                // Render the textured checkerboard quad behind everything
+                                // Render textured checkerboard quad
                                 if let (
                                     Some(tex_pipeline),
                                     Some(tex_cam_bg),
@@ -837,6 +987,91 @@ where
     }));
 
     event_loop.run_app(&mut app).expect("Event loop failed");
+}
+
+/// Create a no-cull unlit pipeline for planet terrain rendering.
+///
+/// Identical to [`UnlitPipeline`] but with `cull_mode: None` so that
+/// cubesphere-displaced triangles render regardless of winding order.
+fn create_no_cull_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    surface_format: wgpu::TextureFormat,
+    depth_format: Option<wgpu::TextureFormat>,
+) -> UnlitPipeline {
+    use std::num::NonZeroU64;
+
+    let camera_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("planet-camera-bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(64),
+                },
+                count: None,
+            }],
+        });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("planet-pipeline-layout"),
+        bind_group_layouts: &[&camera_bind_group_layout],
+        immediate_size: 0,
+    });
+
+    let depth_stencil = depth_format.map(|format| wgpu::DepthStencilState {
+        format,
+        depth_write_enabled: true,
+        depth_compare: wgpu::CompareFunction::GreaterEqual, // reverse-Z
+        stencil: wgpu::StencilState::default(),
+        bias: wgpu::DepthBiasState::default(),
+    });
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("planet-unlit-pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            buffers: &[VertexPositionColor::layout()],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None, // No culling for cubesphere terrain
+            unclipped_depth: false,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            conservative: false,
+        },
+        depth_stencil,
+        multisample: wgpu::MultisampleState {
+            count: 1,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    UnlitPipeline {
+        pipeline,
+        camera_bind_group_layout,
+    }
 }
 
 /// Create six colored quad meshes, one per [`CubeFace`], arranged as a cube

@@ -3,3 +3,13 @@ name = "nebula-planet"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+
+[dependencies]
+glam = { workspace = true }
+bytemuck = { workspace = true }
+nebula-cubesphere = { path = "../nebula-cubesphere" }
+nebula-mesh = { path = "../nebula-mesh" }
+nebula-render = { path = "../nebula-render" }
+nebula-terrain = { path = "../nebula-terrain" }
+nebula-voxel = { path = "../nebula-voxel" }
+tracing = "0.1"

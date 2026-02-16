@@ -26,5 +26,6 @@ nebula-mesh = { path = "../nebula-mesh" }
 nebula-ecs = { path = "../nebula-ecs" }
 nebula-terrain = { path = "../nebula-terrain" }
 nebula-lod = { path = "../nebula-lod" }
+nebula-planet = { path = "../nebula-planet" }
 bevy_ecs = { workspace = true }
 hashbrown = "0.15"
