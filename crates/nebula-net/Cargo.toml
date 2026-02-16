@@ -3,3 +3,7 @@ name = "nebula-net"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+
+[dependencies]
+tokio = { version = "1.49", features = ["net", "rt-multi-thread", "io-util", "macros", "sync", "time"] }
+tracing = "0.1"
