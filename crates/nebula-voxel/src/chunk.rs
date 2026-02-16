@@ -101,6 +101,31 @@ impl ChunkData {
         self.storage.storage_bytes()
     }
 
+    /// Returns a reference to the palette.
+    pub fn palette(&self) -> &[VoxelTypeId] {
+        &self.palette
+    }
+
+    /// Returns a reference to the underlying bit-packed storage.
+    pub fn storage(&self) -> &BitPackedArray {
+        &self.storage
+    }
+
+    /// Constructs `ChunkData` from raw parts (used by deserialization).
+    ///
+    /// The caller must ensure the palette, storage, and bit width are consistent.
+    pub(crate) fn from_raw_parts(
+        palette: Vec<VoxelTypeId>,
+        storage: BitPackedArray,
+        bit_width: u8,
+    ) -> Self {
+        Self {
+            palette,
+            storage,
+            bit_width,
+        }
+    }
+
     /// Compacts the palette by removing unused entries and potentially
     /// downgrading the bit width.
     ///

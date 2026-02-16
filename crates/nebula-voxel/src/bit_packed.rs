@@ -98,6 +98,21 @@ impl BitPackedArray {
     pub fn storage_bytes(&self) -> usize {
         self.data.len() * 8
     }
+
+    /// Returns a reference to the raw `u64` storage words.
+    pub fn raw_data(&self) -> &[u64] {
+        &self.data
+    }
+
+    /// Constructs a `BitPackedArray` from raw parts.
+    ///
+    /// # Safety (logical)
+    ///
+    /// The caller must ensure `data` has the correct number of words for
+    /// `bits * len` total bits, and all stored values fit within `bits` bits.
+    pub fn from_raw(bits: u8, len: usize, data: Vec<u64>) -> Self {
+        Self { data, bits, len }
+    }
 }
 
 // ---------------------------------------------------------------------------

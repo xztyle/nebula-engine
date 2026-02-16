@@ -442,6 +442,58 @@ fn demonstrate_chunk_api() {
     info!("Chunk get/set API demonstration completed successfully");
 }
 
+/// Demonstrates chunk serialization and deserialization round-trip.
+fn demonstrate_chunk_serialization() {
+    info!("Starting chunk serialization demonstration");
+
+    let stone = VoxelTypeId(1);
+    let dirt = VoxelTypeId(2);
+    let grass = VoxelTypeId(3);
+
+    let mut total_bytes = 0usize;
+    let chunk_count = 25;
+
+    for i in 0..chunk_count {
+        let mut chunk = ChunkData::new_air();
+
+        // Fill a surface-like chunk (stone below y=16, dirt at y=16, grass at y=17)
+        if i > 0 {
+            for z in 0..32usize {
+                for x in 0..32usize {
+                    for y in 0..16usize {
+                        chunk.set(x, y, z, stone);
+                    }
+                    chunk.set(x, 16, z, dirt);
+                    chunk.set(x, 17, z, grass);
+                }
+            }
+        }
+
+        let bytes = chunk.serialize();
+        total_bytes += bytes.len();
+
+        // Round-trip integrity check
+        let restored = ChunkData::deserialize(&bytes).expect("deserialize failed");
+        for z in 0..32usize {
+            for y in 0..32usize {
+                for x in 0..32usize {
+                    assert_eq!(chunk.get(x, y, z), restored.get(x, y, z));
+                }
+            }
+        }
+    }
+
+    let avg = total_bytes / chunk_count;
+    info!(
+        "Serialized {} chunks: {:.1}KB total, {}B avg",
+        chunk_count,
+        total_bytes as f64 / 1024.0,
+        avg,
+    );
+
+    info!("Chunk serialization demonstration completed successfully");
+}
+
 /// Demonstrates the chunk manager by loading a 5x5 grid of chunks.
 fn demonstrate_chunk_manager() -> usize {
     info!("Starting chunk manager demonstration");
@@ -545,6 +597,9 @@ fn main() {
 
     // Demonstrate chunk get/set API
     demonstrate_chunk_api();
+
+    // Demonstrate chunk serialization
+    demonstrate_chunk_serialization();
 
     // Demonstrate chunk manager
     let chunks_loaded = demonstrate_chunk_manager();
