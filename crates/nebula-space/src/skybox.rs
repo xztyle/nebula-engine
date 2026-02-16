@@ -53,8 +53,9 @@ fn vs_skybox(@builtin(vertex_index) idx: u32) -> VertexOutput {
 @fragment
 fn fs_skybox(in: VertexOutput) -> @location(0) vec4<f32> {
     let color = textureSample(skybox_texture, skybox_sampler, in.view_dir);
-    // Amplify star brightness to make sparse cubemap pixels visible
-    return vec4<f32>(min(color.rgb * 5.0, vec3<f32>(1.0, 1.0, 1.0)), 1.0);
+    // HDR output: bright stars exceed 1.0 for bloom extraction.
+    // No clamping — values above bloom threshold (1.0) produce glow.
+    return vec4<f32>(color.rgb * 8.0, 1.0);
 }
 "#;
 

@@ -18,10 +18,11 @@ use nebula_planet::{
     generate_orbital_sphere, impostor_quad_size,
 };
 use nebula_render::{
-    BufferAllocator, Camera, CameraUniform, DepthBuffer, FrameEncoder, IndexData, MeshBuffer,
-    RenderContext, RenderPassBuilder, ShaderLibrary, SurfaceWrapper, TEXTURED_SHADER_SOURCE,
-    TextureManager, TexturedPipeline, UNLIT_SHADER_SOURCE, UnlitPipeline, VertexPositionColor,
-    VertexPositionNormalUv, draw_textured, draw_unlit, init_render_context_blocking,
+    BloomConfig, BloomPipeline, BufferAllocator, Camera, CameraUniform, DepthBuffer, FrameEncoder,
+    IndexData, MeshBuffer, RenderContext, RenderPassBuilder, ShaderLibrary, SurfaceWrapper,
+    TEXTURED_SHADER_SOURCE, TextureManager, TexturedPipeline, UNLIT_SHADER_SOURCE, UnlitPipeline,
+    VertexPositionColor, VertexPositionNormalUv, draw_textured, draw_unlit,
+    init_render_context_blocking,
 };
 use nebula_space::{SkyboxRenderer, StarfieldCubemap, StarfieldGenerator};
 use tracing::{error, info, instrument, warn};
@@ -153,6 +154,8 @@ pub struct AppState {
     pub impostor_config: ImpostorConfig,
     /// Procedural starfield skybox renderer.
     pub skybox_renderer: Option<SkyboxRenderer>,
+    /// Bloom post-processing pipeline for HDR star rendering.
+    pub bloom_pipeline: Option<BloomPipeline>,
 }
 
 impl AppState {
@@ -208,6 +211,7 @@ impl AppState {
             impostor_state: ImpostorState::new(0.05),
             impostor_config: ImpostorConfig::default(),
             skybox_renderer: None,
+            bloom_pipeline: None,
         }
     }
 
@@ -270,6 +274,7 @@ impl AppState {
             impostor_state: ImpostorState::new(0.05),
             impostor_config: ImpostorConfig::default(),
             skybox_renderer: None,
+            bloom_pipeline: None,
         }
     }
 
@@ -490,14 +495,26 @@ impl AppState {
         );
         self.impostor_renderer = Some(impostor);
 
-        // --- Procedural starfield skybox ---
+        // --- Bloom post-processing pipeline ---
+        let hdr_format = wgpu::TextureFormat::Rgba16Float;
+        let bloom = BloomPipeline::new(
+            &gpu.device,
+            hdr_format,
+            gpu.surface_format,
+            self.surface_width(),
+            self.surface_height(),
+            BloomConfig::default(),
+        );
+        self.bloom_pipeline = Some(bloom);
+
+        // --- Procedural starfield skybox (renders to HDR target) ---
         let starfield_gen = StarfieldGenerator::new(42, 8000);
         let stars = starfield_gen.generate();
         let starfield_cubemap = StarfieldCubemap::render(&stars, 512);
         let skybox = SkyboxRenderer::new(
             &gpu.device,
             &gpu.queue,
-            gpu.surface_format,
+            hdr_format, // HDR target format for bloom
             &starfield_cubemap,
         );
         self.skybox_renderer = Some(skybox);
@@ -793,6 +810,13 @@ impl ApplicationHandler for AppState {
                         }
                     }
 
+                    // Resize bloom pipeline
+                    if let Some(gpu) = &self.gpu
+                        && let Some(bloom) = &mut self.bloom_pipeline
+                    {
+                        bloom.resize(&gpu.device, w, h);
+                    }
+
                     info!(
                         "Window resized to {}x{} (scale: {:.2})",
                         w, h, resize.scale_factor
@@ -824,6 +848,12 @@ impl ApplicationHandler for AppState {
                                 self.atmosphere_bind_group =
                                     Some(atmo.create_bind_group(&gpu.device, &depth_buffer.view));
                             }
+                        }
+
+                        if let Some(gpu) = &self.gpu
+                            && let Some(bloom) = &mut self.bloom_pipeline
+                        {
+                            bloom.resize(&gpu.device, w, h);
                         }
 
                         info!(
@@ -945,8 +975,10 @@ impl ApplicationHandler for AppState {
                             let render_orbital = self.transition_blend > 0.0;
                             let render_voxels = self.transition_blend < 1.0;
 
-                            // === Pass -1: Starfield skybox ===
-                            if let Some(skybox) = &self.skybox_renderer {
+                            // === Pass -1: Starfield skybox → HDR + Bloom ===
+                            if let (Some(skybox), Some(bloom)) =
+                                (&self.skybox_renderer, &self.bloom_pipeline)
+                            {
                                 // Build rotation-only inverse VP for skybox
                                 let aspect = self.surface_width() as f32
                                     / self.surface_height().max(1) as f32;
@@ -959,7 +991,6 @@ impl ApplicationHandler for AppState {
                                 let altitude = planet_radius * 3.0;
                                 let dist = planet_radius + altitude;
                                 let tilt = 0.4_f32;
-                                // Compute view direction (rotation only, no translation)
                                 let eye = glam::Vec3::new(
                                     (orbit_angle.sin() as f32) * dist * tilt.cos(),
                                     dist * tilt.sin(),
@@ -968,7 +999,6 @@ impl ApplicationHandler for AppState {
                                 let forward = (-eye).normalize();
                                 let right = forward.cross(glam::Vec3::Y).normalize();
                                 let up = right.cross(forward).normalize();
-                                // Rotation-only view matrix (3x3 -> 4x4, no translation)
                                 let view_rot = glam::Mat4::from_cols(
                                     glam::Vec4::new(right.x, up.x, -forward.x, 0.0),
                                     glam::Vec4::new(right.y, up.y, -forward.y, 0.0),
@@ -985,13 +1015,25 @@ impl ApplicationHandler for AppState {
                                 let inv_vp = vp_rot.inverse();
                                 skybox.update(&gpu.queue, inv_vp);
 
+                                // Render skybox to HDR texture
+                                let hdr_clear = wgpu::Color {
+                                    r: clear_color.r * 0.1,
+                                    g: clear_color.g * 0.1,
+                                    b: clear_color.b * 0.1,
+                                    a: 1.0,
+                                };
                                 let pb = RenderPassBuilder::new()
-                                    .clear_color(clear_color)
-                                    .label("skybox-pass");
+                                    .clear_color(hdr_clear)
+                                    .label("skybox-hdr-pass");
                                 {
-                                    let mut pass = frame_encoder.begin_render_pass(&pb);
+                                    let mut pass =
+                                        frame_encoder.begin_render_pass_to(&pb, bloom.hdr_view());
                                     skybox.render(&mut pass);
                                 }
+
+                                // Run bloom: extract → blur → tonemap → composite
+                                let (encoder, surface_view) = frame_encoder.encoder_and_view();
+                                bloom.execute(encoder, surface_view);
                             }
 
                             // === Pass 0: Orbital planet sphere (or clear-only) ===

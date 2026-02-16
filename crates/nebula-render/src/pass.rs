@@ -108,9 +108,9 @@ impl RenderPassBuilder {
         self
     }
 
-    /// Internal helper to create render pass with the given view.
+    /// Create render pass with the given view.
     /// This avoids lifetime issues by directly creating the render pass.
-    fn create_render_pass<'encoder>(
+    pub(crate) fn create_render_pass<'encoder>(
         &self,
         encoder: &'encoder mut wgpu::CommandEncoder,
         color_view: &'encoder wgpu::TextureView,
@@ -209,6 +209,34 @@ impl FrameEncoder {
                 .as_mut()
                 .expect("FrameEncoder already submitted"),
             view,
+        )
+    }
+
+    /// Returns a mutable reference to the command encoder and an immutable reference
+    /// to the surface texture view. Use this to create custom render passes targeting
+    /// textures other than the surface (e.g., HDR render targets).
+    pub fn encoder_and_view(&mut self) -> (&mut wgpu::CommandEncoder, &wgpu::TextureView) {
+        (
+            self.encoder
+                .as_mut()
+                .expect("FrameEncoder already submitted"),
+            self.surface_view
+                .as_ref()
+                .expect("FrameEncoder already submitted"),
+        )
+    }
+
+    /// Begin a render pass targeting a custom texture view instead of the surface.
+    pub fn begin_render_pass_to<'a>(
+        &'a mut self,
+        builder: &'a RenderPassBuilder,
+        target_view: &'a wgpu::TextureView,
+    ) -> wgpu::RenderPass<'a> {
+        builder.create_render_pass(
+            self.encoder
+                .as_mut()
+                .expect("FrameEncoder already submitted"),
+            target_view,
         )
     }
 
