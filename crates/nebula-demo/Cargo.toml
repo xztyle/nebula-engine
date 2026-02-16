@@ -33,3 +33,4 @@ hashbrown = "0.15"
 nebula-player = { path = "../nebula-player" }
 nebula-physics = { path = "../nebula-physics" }
 rapier3d = "0.32"
+nebula-net = { path = "../nebula-net" }

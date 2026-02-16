@@ -2,6 +2,7 @@
 
 pub mod framing;
 pub mod messages;
+pub mod routing;
 pub mod tcp_client;
 pub mod tcp_server;
 
@@ -10,6 +11,10 @@ pub use messages::{
     ChunkData, EntityUpdate, LoginRequest, LoginResponse, Logout, Message, MessageError,
     PROTOCOL_VERSION, Ping, PlayerAction, PlayerPosition, Pong, TimeSync, deserialize_message,
     serialize_message,
+};
+pub use routing::{
+    HandlerContext, IncomingMessage, MessageHandler, MessageRouter, MessageTag, message_channel,
+    process_incoming_messages,
 };
 pub use tcp_client::{ConnectionState, ConnectionStateWatch, GameClient};
 pub use tcp_server::{

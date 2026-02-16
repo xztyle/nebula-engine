@@ -3011,6 +3011,35 @@ fn demonstrate_gravity_sources() {
     info!("Gravity sources demonstration completed successfully");
 }
 
+fn demonstrate_message_routing() {
+    info!("Starting message routing demonstration");
+
+    let mut router = nebula_net::MessageRouter::new();
+
+    fn handle_login(_msg: nebula_net::Message, _ctx: &nebula_net::HandlerContext) {
+        tracing::debug!("Handling LoginRequest");
+    }
+    fn handle_ping(_msg: nebula_net::Message, _ctx: &nebula_net::HandlerContext) {
+        tracing::debug!("Handling Ping");
+    }
+    fn handle_position(_msg: nebula_net::Message, _ctx: &nebula_net::HandlerContext) {
+        tracing::debug!("Handling PlayerPosition");
+    }
+
+    router.register(nebula_net::MessageTag::LoginRequest, handle_login);
+    router.register(nebula_net::MessageTag::Ping, handle_ping);
+    router.register(nebula_net::MessageTag::PlayerPosition, handle_position);
+
+    // Log the routing table at startup
+    let tags: Vec<_> = router.registered_tags().collect();
+    info!("Message routing table: {} handlers registered", tags.len());
+    for tag in &tags {
+        info!("  Route: {:?} -> handler", tag);
+    }
+
+    info!("Message routing demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -3511,6 +3540,9 @@ fn main() {
     for (action, bindings) in &input_map.bindings {
         info!("  {action:?} -> {bindings:?}");
     }
+
+    // Demonstrate message routing table
+    demonstrate_message_routing();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {
