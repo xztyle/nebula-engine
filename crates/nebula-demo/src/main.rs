@@ -1757,6 +1757,170 @@ fn demonstrate_feature_placement() -> usize {
     total
 }
 
+/// Demonstrates terrain debug visualization: generates heightmap, biome, cave, and ore debug images.
+fn demonstrate_terrain_debug_viz() {
+    use glam::DVec3;
+    use nebula_cubesphere::CubeFace;
+    use nebula_terrain::{
+        BiomeDef, BiomeRegistry, BiomeSampler, CaveCarver, CaveConfig, HeightmapParams,
+        HeightmapSampler, OreDistributor, SliceParams, TerrainDebugState, TerrainHeightConfig,
+        WhittakerDiagram, WhittakerRegion, default_ore_distributions, render_biome_debug,
+        render_cave_cross_section, render_heightmap_debug, render_ore_heatmap,
+    };
+
+    info!("Starting terrain debug visualization demonstration");
+
+    // Debug state toggle test
+    let mut state = TerrainDebugState::new();
+    assert!(!state.any_visible());
+    state.show_heightmap = true;
+    state.show_biome_map = true;
+    state.show_cave_section = true;
+    state.show_ore_heatmap = true;
+    assert!(state.any_visible());
+
+    // Heightmap debug image
+    let sampler = HeightmapSampler::new(HeightmapParams {
+        seed: 42,
+        ..Default::default()
+    });
+    let config = TerrainHeightConfig::default();
+    let heightmap_img = render_heightmap_debug(
+        &sampler,
+        &config,
+        128,
+        128,
+        CubeFace::PosX,
+        (0.0, 0.0, 1.0, 1.0),
+    );
+    info!(
+        "Heightmap debug: {}x{}, {} unique colors",
+        heightmap_img.width,
+        heightmap_img.height,
+        heightmap_img.unique_color_count()
+    );
+
+    // Biome debug image
+    let mut registry = BiomeRegistry::new();
+    let plains = registry
+        .register(BiomeDef {
+            name: "plains".into(),
+            surface_voxel: VoxelTypeId(30),
+            subsurface_voxel: VoxelTypeId(31),
+            vegetation_density: 0.3,
+            tree_type: Some("oak".into()),
+        })
+        .unwrap();
+    let desert = registry
+        .register(BiomeDef {
+            name: "desert".into(),
+            surface_voxel: VoxelTypeId(20),
+            subsurface_voxel: VoxelTypeId(21),
+            vegetation_density: 0.01,
+            tree_type: None,
+        })
+        .unwrap();
+    let forest = registry
+        .register(BiomeDef {
+            name: "forest".into(),
+            surface_voxel: VoxelTypeId(40),
+            subsurface_voxel: VoxelTypeId(41),
+            vegetation_density: 0.8,
+            tree_type: Some("birch".into()),
+        })
+        .unwrap();
+
+    let diagram = WhittakerDiagram {
+        regions: vec![
+            WhittakerRegion {
+                temp_min: 0.0,
+                temp_max: 0.5,
+                moisture_min: 0.0,
+                moisture_max: 1.0,
+                biome_id: plains,
+            },
+            WhittakerRegion {
+                temp_min: 0.5,
+                temp_max: 1.0,
+                moisture_min: 0.0,
+                moisture_max: 0.4,
+                biome_id: desert,
+            },
+            WhittakerRegion {
+                temp_min: 0.5,
+                temp_max: 1.0,
+                moisture_min: 0.4,
+                moisture_max: 1.0,
+                biome_id: forest,
+            },
+        ],
+        fallback: plains,
+    };
+
+    let biome_sampler = BiomeSampler::new(42, diagram);
+    let biome_img = render_biome_debug(
+        &biome_sampler,
+        &registry,
+        128,
+        128,
+        CubeFace::PosX,
+        (0.0, 0.0, 1.0, 1.0),
+    );
+    info!(
+        "Biome debug: {}x{}, {} unique colors",
+        biome_img.width,
+        biome_img.height,
+        biome_img.unique_color_count()
+    );
+
+    // Cave cross-section debug image
+    let carver = CaveCarver::new(CaveConfig {
+        seed: 42,
+        threshold: 0.0,
+        ..Default::default()
+    });
+    let planet_radius = 6_371_000.0_f64;
+    let surface_height = planet_radius + 200.0;
+    let sea_level = planet_radius;
+    let cave_slice = SliceParams {
+        origin: DVec3::new(surface_height - 50.0, 0.0, 0.0),
+        u_axis: DVec3::Y,
+        v_axis: DVec3::Z,
+        extent: 500.0,
+    };
+    let cave_img =
+        render_cave_cross_section(&carver, 64, 64, &cave_slice, surface_height, sea_level);
+    info!(
+        "Cave debug: {}x{}, {} unique colors",
+        cave_img.width,
+        cave_img.height,
+        cave_img.unique_color_count()
+    );
+
+    // Ore heatmap debug image
+    let distributor = OreDistributor::new(42, default_ore_distributions());
+    let ore_slice = SliceParams {
+        origin: DVec3::new(surface_height - 50.0, 0.0, 0.0),
+        u_axis: DVec3::Y,
+        v_axis: DVec3::Z,
+        extent: 200.0,
+    };
+    let ore_img = render_ore_heatmap(&distributor, 64, 64, &ore_slice, surface_height);
+    info!(
+        "Ore debug: {}x{}, {} unique colors",
+        ore_img.width,
+        ore_img.height,
+        ore_img.unique_color_count()
+    );
+
+    state.mark_dirty();
+    assert!(state.is_dirty());
+    state.clear_dirty();
+    assert!(!state.is_dirty());
+
+    info!("Terrain debug visualization demonstration completed successfully");
+}
+
 /// Demonstrates async chunk generation: offloads terrain generation to background threads.
 fn demonstrate_async_chunk_generation() -> (usize, u64) {
     use nebula_coords::WorldPosition;
@@ -1949,6 +2113,9 @@ fn main() {
 
     // Demonstrate feature placement
     let feature_count = demonstrate_feature_placement();
+
+    // Demonstrate terrain debug visualization
+    demonstrate_terrain_debug_viz();
 
     // Demonstrate async chunk generation
     let (async_gen_chunks, async_gen_ms) = demonstrate_async_chunk_generation();

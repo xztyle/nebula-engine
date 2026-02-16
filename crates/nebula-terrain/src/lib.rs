@@ -2,6 +2,7 @@
 
 mod async_generation;
 mod cave;
+pub mod debug_viz;
 mod feature;
 mod heightmap;
 mod ore;
@@ -18,6 +19,10 @@ pub use biome::{
     WhittakerRegion,
 };
 pub use cave::{CaveCarver, CaveConfig};
+pub use debug_viz::{
+    DebugImage, SliceParams, TerrainDebugState, biome_color, height_to_color, render_biome_debug,
+    render_cave_cross_section, render_heightmap_debug, render_ore_heatmap,
+};
 pub use feature::{
     BiomeFeatureConfig, FeaturePlacer, FeatureTypeDef, FeatureTypeId, PlacedFeature,
     poisson_disk_2d,
