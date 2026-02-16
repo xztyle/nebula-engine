@@ -11,8 +11,8 @@ use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
 use nebula_cubesphere::PlanetDef;
 use nebula_mesh::{
-    ChunkNeighborhood, EdgeDirection, compute_visible_faces, count_total_faces,
-    count_visible_faces, greedy_mesh,
+    ChunkNeighborhood, EdgeDirection, FaceDirection, compute_face_ao, compute_visible_faces,
+    count_total_faces, count_visible_faces, greedy_mesh, vertex_ao,
 };
 use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
 use nebula_voxel::{
@@ -866,6 +866,57 @@ fn demonstrate_greedy_meshing() -> (usize, usize) {
     (greedy_quads, naive_quads)
 }
 
+/// Demonstrates ambient occlusion: vertices at concave corners get darker shading.
+fn demonstrate_ambient_occlusion() -> (u8, u8, usize) {
+    info!("Starting ambient occlusion demonstration");
+
+    // Basic vertex AO checks
+    let exposed = vertex_ao(false, false, false);
+    let occluded = vertex_ao(true, true, true);
+    info!("Vertex AO: exposed={exposed}, fully occluded={occluded}");
+
+    // Build a staircase to demonstrate AO gradients
+    let mut registry = VoxelTypeRegistry::new();
+    let stone_id = registry
+        .register(VoxelTypeDef {
+            name: "ao_stone".to_string(),
+            solid: true,
+            transparency: Transparency::Opaque,
+            material_index: 1,
+            light_emission: 0,
+        })
+        .expect("register stone");
+
+    let mut chunk = ChunkData::new_air();
+    // Staircase: each step is one block higher
+    for step in 0..8_usize {
+        for z in 0..8_usize {
+            for y in 0..=step {
+                chunk.set(step, y, z, stone_id);
+            }
+        }
+    }
+
+    let neighbors = ChunkNeighborhood::all_air();
+    let visible = compute_visible_faces(&chunk, &neighbors, &registry);
+    let mesh = greedy_mesh(&chunk, &visible, &neighbors, &registry);
+
+    // Count vertices with non-zero AO
+    let ao_vertices = mesh.vertices.iter().filter(|v| v.ao > 0).count();
+    info!(
+        "Staircase mesh: {} quads, {} vertices with AO shading",
+        mesh.quad_count(),
+        ao_vertices
+    );
+
+    // Compute face AO for a step corner to verify gradient
+    let ao = compute_face_ao(&neighbors, &registry, (1, 0, 0), FaceDirection::PosY);
+    info!("Step corner AO values: {ao:?}");
+
+    info!("Ambient occlusion demonstration completed successfully");
+    (exposed, occluded, ao_vertices)
+}
+
 /// Demonstrates adjacent chunk culling: faces at chunk boundaries are
 /// correctly hidden when the neighboring chunk has solid voxels.
 fn demonstrate_adjacent_chunk_culling() -> (u32, u32) {
@@ -1000,6 +1051,9 @@ fn main() {
     // Demonstrate greedy meshing
     let (greedy_quads, naive_quads) = demonstrate_greedy_meshing();
 
+    // Demonstrate ambient occlusion
+    let (ao_exposed, ao_occluded, ao_shaded_verts) = demonstrate_ambient_occlusion();
+
     // Demonstrate adjacent chunk culling
     let (faces_no_neighbor, faces_with_neighbor) = demonstrate_adjacent_chunk_culling();
 
@@ -1024,8 +1078,15 @@ fn main() {
         total_faces,
     );
     config.window.title = format!(
-        "{} - Greedy: {} quads (was {}) - AdjCull: {}/{}",
-        config.window.title, greedy_quads, naive_quads, faces_with_neighbor, faces_no_neighbor
+        "{} - Greedy: {} quads (was {}) - AO: {}/{} ({} shaded) - AdjCull: {}/{}",
+        config.window.title,
+        greedy_quads,
+        naive_quads,
+        ao_exposed,
+        ao_occluded,
+        ao_shaded_verts,
+        faces_with_neighbor,
+        faces_no_neighbor
     );
 
     info!(

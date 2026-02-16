@@ -43,18 +43,32 @@ fn axes_to_xyz(
 pub fn greedy_mesh(
     chunk: &ChunkData,
     visible_faces: &[VisibleFaces],
-    _neighbors: &ChunkNeighborhood,
-    _registry: &VoxelTypeRegistry,
+    neighbors: &ChunkNeighborhood,
+    registry: &VoxelTypeRegistry,
 ) -> ChunkMesh {
     let mut mesh = ChunkMesh::new();
     let size = CHUNK_SIZE;
     let mut visited = vec![false; size * size];
+    // Pre-compute per-face AO values for the current layer.
+    let mut ao_cache = vec![[0u8; 4]; size * size];
 
     for direction in FaceDirection::ALL {
         let (layer_axis, u_axis, v_axis) = direction.sweep_axes();
 
         for layer in 0..size {
             visited.fill(false);
+
+            // Pre-compute AO for all visible faces in this layer.
+            for v in 0..size {
+                for u in 0..size {
+                    let (x, y, z) = axes_to_xyz(layer_axis, u_axis, v_axis, layer, u, v);
+                    let idx = x + y * size + z * size * size;
+                    if visible_faces[idx].is_visible(direction) {
+                        ao_cache[v * size + u] =
+                            compute_face_ao(neighbors, registry, (x, y, z), direction);
+                    }
+                }
+            }
 
             for v in 0..size {
                 for u in 0..size {
@@ -71,6 +85,7 @@ pub fn greedy_mesh(
                     }
 
                     let voxel_type = chunk.get(x, y, z);
+                    let base_ao = ao_cache[vis_idx];
 
                     // Extend width along u-axis.
                     let mut w = 1;
@@ -80,6 +95,7 @@ pub fn greedy_mesh(
                         if visited[v * size + u + w]
                             || !visible_faces[ni].is_visible(direction)
                             || chunk.get(nx, ny, nz) != voxel_type
+                            || ao_cache[v * size + u + w] != base_ao
                         {
                             break;
                         }
@@ -96,6 +112,7 @@ pub fn greedy_mesh(
                             if visited[(v + h) * size + u + du]
                                 || !visible_faces[ni].is_visible(direction)
                                 || chunk.get(nx, ny, nz) != voxel_type
+                                || ao_cache[(v + h) * size + u + du] != base_ao
                             {
                                 break 'outer;
                             }
@@ -110,8 +127,8 @@ pub fn greedy_mesh(
                         }
                     }
 
-                    // Emit merged quad.
-                    mesh.push_quad(direction, layer, u, v, w, h, voxel_type);
+                    // Emit merged quad with AO.
+                    mesh.push_quad_ao(direction, layer, u, v, w, h, voxel_type, base_ao);
                 }
             }
         }

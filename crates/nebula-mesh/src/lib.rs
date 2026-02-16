@@ -1,5 +1,6 @@
 //! Meshing algorithms: greedy meshing, ambient occlusion, LOD stitching, and mesh data structures.
 
+pub mod ambient_occlusion;
 pub mod chunk_mesh;
 pub mod face_direction;
 pub mod greedy;
@@ -7,6 +8,7 @@ pub mod neighborhood;
 pub mod visibility;
 pub mod visible_faces;
 
+pub use ambient_occlusion::{compute_face_ao, should_flip_ao_diagonal, vertex_ao};
 pub use chunk_mesh::{ChunkMesh, MeshVertex, QuadInfo};
 pub use face_direction::{CornerDirection, EdgeDirection, FaceDirection};
 pub use greedy::greedy_mesh;

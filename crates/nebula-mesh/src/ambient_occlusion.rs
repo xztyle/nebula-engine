@@ -213,21 +213,12 @@ pub fn compute_face_ao(
     let mut ao = [0u8; 4];
 
     for (i, vo) in offsets.iter().enumerate() {
-        let s1 = registry.is_solid(neighborhood.get(
-            x + vo.side1.0,
-            y + vo.side1.1,
-            z + vo.side1.2,
-        ));
-        let s2 = registry.is_solid(neighborhood.get(
-            x + vo.side2.0,
-            y + vo.side2.1,
-            z + vo.side2.2,
-        ));
-        let c = registry.is_solid(neighborhood.get(
-            x + vo.corner.0,
-            y + vo.corner.1,
-            z + vo.corner.2,
-        ));
+        let s1 =
+            registry.is_solid(neighborhood.get(x + vo.side1.0, y + vo.side1.1, z + vo.side1.2));
+        let s2 =
+            registry.is_solid(neighborhood.get(x + vo.side2.0, y + vo.side2.1, z + vo.side2.2));
+        let c =
+            registry.is_solid(neighborhood.get(x + vo.corner.0, y + vo.corner.1, z + vo.corner.2));
         ao[i] = vertex_ao(s1, s2, c);
     }
 
