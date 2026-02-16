@@ -3,3 +3,8 @@ name = "nebula-physics"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+
+[dependencies]
+rapier3d = "0.32"
+bevy_ecs = { workspace = true }
+glam = { workspace = true }

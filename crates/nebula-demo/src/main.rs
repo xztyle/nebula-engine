@@ -2520,6 +2520,48 @@ fn demonstrate_horizon_culling() {
     info!("Horizon culling demonstration completed successfully");
 }
 
+/// Demonstrates physics world initialization and stepping.
+fn demonstrate_physics_world() {
+    use nebula_physics::PhysicsWorld;
+
+    info!("Starting physics world demonstration");
+
+    let mut world = PhysicsWorld::new();
+    let g = world.gravity();
+    info!(
+        "Physics world created: gravity=({}, {}, {}), dt={}",
+        g.0, g.1, g.2, world.integration_parameters.dt
+    );
+
+    // Step the empty world 60 times (1 simulated second)
+    for _ in 0..60 {
+        world.step();
+    }
+    info!("Stepped empty physics world 60 times (1s simulated) — no errors");
+
+    // Add a dynamic body and verify it falls
+    use rapier3d::prelude::*;
+    let body = RigidBodyBuilder::dynamic()
+        .translation(Vector::new(0.0, 10.0, 0.0))
+        .build();
+    let handle = world.rigid_body_set.insert(body);
+    let collider = ColliderBuilder::ball(0.5).build();
+    world
+        .collider_set
+        .insert_with_parent(collider, handle, &mut world.rigid_body_set);
+
+    for _ in 0..60 {
+        world.step();
+    }
+    let pos = world.rigid_body_set[handle].translation();
+    info!(
+        "After 60 steps with gravity: body y={:.3} (started at 10.0)",
+        pos.y
+    );
+
+    info!("Physics world demonstration completed successfully");
+}
+
 /// Configure system ordering constraints for all engine stages.
 fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
@@ -2687,10 +2729,14 @@ fn main() {
     demonstrate_horizon_culling();
     demonstrate_floating_origin();
 
+    // Demonstrate physics world initialization and stepping
+    demonstrate_physics_world();
+
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
     ecs_world.insert_resource(nebula_ecs::CameraRes::default());
     ecs_world.insert_resource(nebula_player::FloatingOrigin::default());
+    ecs_world.insert_resource(nebula_physics::PhysicsWorld::new());
     ecs_world.insert_resource(nebula_ecs::SpawnQueue::default());
     ecs_world.insert_resource(nebula_ecs::DespawnQueue::default());
     let mut ecs_schedules = nebula_ecs::EngineSchedules::new();
@@ -2712,6 +2758,10 @@ fn main() {
             tracing::debug!("Stage: PreUpdate/Input");
         })
         .in_set(nebula_ecs::PreUpdateSet::Input),
+    );
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::FixedUpdate,
+        nebula_physics::physics_step_system,
     );
     ecs_schedules.add_system(nebula_ecs::EngineSchedule::FixedUpdate, || {
         tracing::debug!("Stage: FixedUpdate");
