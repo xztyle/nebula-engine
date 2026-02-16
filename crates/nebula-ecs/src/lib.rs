@@ -5,6 +5,7 @@
 
 mod camera;
 mod components;
+mod lifecycle;
 mod schedule;
 mod systems;
 mod time;
@@ -12,6 +13,7 @@ mod world;
 
 pub use camera::CameraRes;
 pub use components::{Active, LocalPos, Name, Rotation, Scale, SpatialBundle, Velocity, WorldPos};
+pub use lifecycle::{DespawnQueue, SpawnQueue, despawn_entity, flush_entity_queues, spawn_entity};
 pub use schedule::{EngineSchedule, EngineSchedules};
 pub use systems::update_local_positions;
 pub use time::TimeRes;

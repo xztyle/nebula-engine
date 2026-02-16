@@ -1408,6 +1408,8 @@ fn main() {
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
     ecs_world.insert_resource(nebula_ecs::CameraRes::default());
+    ecs_world.insert_resource(nebula_ecs::SpawnQueue::default());
+    ecs_world.insert_resource(nebula_ecs::DespawnQueue::default());
     let mut ecs_schedules = nebula_ecs::EngineSchedules::new();
 
     // Register stage-logging systems so the console shows execution order
@@ -1422,6 +1424,10 @@ fn main() {
     });
     ecs_schedules.add_system(
         nebula_ecs::EngineSchedule::PostUpdate,
+        nebula_ecs::flush_entity_queues,
+    );
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::PostUpdate,
         nebula_ecs::update_local_positions,
     );
     ecs_schedules.add_system(nebula_ecs::EngineSchedule::PostUpdate, || {
@@ -1434,11 +1440,49 @@ fn main() {
         tracing::debug!("Stage: Render");
     });
 
+    // Spawn chunk entities using the entity lifecycle API
+    let mut chunk_entities = Vec::new();
+    for cx in 0..5_i128 {
+        for cz in 0..5_i128 {
+            let entity = nebula_ecs::spawn_entity(
+                &mut ecs_world,
+                (
+                    nebula_ecs::WorldPos::new(cx * 32_000, 0, cz * 32_000),
+                    nebula_ecs::Name::new(format!("chunk_{cx}_{cz}")),
+                    nebula_ecs::Active(true),
+                ),
+            );
+            chunk_entities.push(entity);
+        }
+    }
+    info!(
+        "Spawned {} chunk entities via entity lifecycle API",
+        chunk_entities.len()
+    );
+
+    // Despawn edge chunks to simulate camera movement
+    let mut despawned = 0;
+    for &e in &chunk_entities[..5] {
+        if nebula_ecs::despawn_entity(&mut ecs_world, e) {
+            despawned += 1;
+        }
+    }
+    info!(
+        "Despawned {} edge chunk entities, {} remain",
+        despawned,
+        ecs_world.entities().len()
+    );
+
+    // Double-despawn safety check
+    let double = nebula_ecs::despawn_entity(&mut ecs_world, chunk_entities[0]);
+    info!("Double-despawn returned {} (expected false)", double);
+
     // Run one frame to verify stage ordering
     ecs_schedules.run(&mut ecs_world, 1.0 / 60.0);
+    let entity_count = ecs_world.entities().len();
     info!(
-        "ECS World created with {} entities, stage pipeline validated",
-        ecs_world.entities().len()
+        "ECS World: {} entities after lifecycle operations, stage pipeline validated",
+        entity_count
     );
 
     // Log initial state
@@ -1478,8 +1522,15 @@ fn main() {
         async_quads,
     );
     config.window.title = format!(
-        "{} - Invalidation: int={}/bnd={}/crn={} - CubeDisp: {}v [{:.0},{:.0}]",
-        config.window.title, inv_interior, inv_boundary, inv_corner, disp_verts, disp_min, disp_max,
+        "{} - Invalidation: int={}/bnd={}/crn={} - CubeDisp: {}v [{:.0},{:.0}] - Entities: {}",
+        config.window.title,
+        inv_interior,
+        inv_boundary,
+        inv_corner,
+        disp_verts,
+        disp_min,
+        disp_max,
+        entity_count,
     );
 
     info!(
