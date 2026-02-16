@@ -5,6 +5,7 @@
 
 pub mod physics_bridge;
 pub mod physics_island;
+pub mod player_physics;
 pub mod voxel_collision;
 
 pub use physics_bridge::{
@@ -14,6 +15,10 @@ pub use physics_bridge::{
 pub use physics_island::{
     ChunkCoord, FrozenPhysicsState, IslandPlayer, IslandWorldPos, PhysicsEligible, PhysicsIsland,
     RigidBodyHandle, physics_island_update_system,
+};
+pub use player_physics::{
+    JUMP_IMPULSE, PlayerPhysics, WALK_SPEED, ground_raycast, player_movement_step,
+    spawn_player_physics,
 };
 pub use voxel_collision::{
     ChunkColliderMap, chunk_to_voxel_collider, create_chunk_collider, remove_chunk_colliders,

@@ -2742,6 +2742,55 @@ fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     }
 }
 
+/// Demonstrates player character physics: capsule falls under gravity, lands on terrain.
+fn demonstrate_player_physics() {
+    use nebula_physics::{PhysicsWorld, player_movement_step, spawn_player_physics};
+    use rapier3d::prelude::*;
+
+    info!("Starting player character physics demonstration");
+
+    let mut physics = PhysicsWorld::new();
+
+    // Create a floor
+    let floor_body = RigidBodyBuilder::fixed()
+        .translation(Vector::new(0.0, -0.5, 0.0))
+        .build();
+    let floor_handle = physics.rigid_body_set.insert(floor_body);
+    physics.collider_set.insert_with_parent(
+        ColliderBuilder::cuboid(50.0, 0.5, 50.0).build(),
+        floor_handle,
+        &mut physics.rigid_body_set,
+    );
+
+    // Spawn player capsule 5m above the floor
+    let mut player = spawn_player_physics(&mut physics, glam::Vec3::new(0.0, 5.0, 0.0));
+    let dt = 1.0 / 60.0;
+
+    // Simulate 120 ticks: player should fall and land
+    for _ in 0..120 {
+        physics.step();
+        player_movement_step(&mut player, &mut physics, glam::Vec3::ZERO, false, dt);
+        physics.step();
+    }
+
+    let pos = physics.rigid_body_set[player.body_handle].translation();
+    info!(
+        "Player capsule: y={:.3} (started at 5.0, should rest ~0.9), grounded={}",
+        pos.y, player.grounded
+    );
+    assert!(
+        player.grounded,
+        "Player should be grounded after falling onto floor"
+    );
+    assert!(
+        pos.y < 2.0,
+        "Player should have fallen from y=5.0, got y={}",
+        pos.y
+    );
+
+    info!("Player character physics demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -2898,6 +2947,9 @@ fn main() {
 
     // Demonstrate i128-to-f32 physics bridge
     demonstrate_physics_bridge();
+
+    // Demonstrate player character physics
+    demonstrate_player_physics();
 
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
