@@ -196,6 +196,64 @@ impl VertexPositionNormalUv {
     }
 }
 
+/// PBR voxel vertex with position, normal, UV, material ID, and ambient occlusion.
+///
+/// Used by [`crate::PbrVoxelPipeline`] for per-vertex material lookups.
+/// Total stride: 40 bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct VoxelVertex {
+    /// World-space position.
+    pub position: [f32; 3],
+    /// Surface normal.
+    pub normal: [f32; 3],
+    /// Texture atlas UV coordinates.
+    pub uv: [f32; 2],
+    /// Index into the material storage buffer.
+    pub material_id: u32,
+    /// Ambient occlusion factor \[0.0, 1.0\].
+    pub ao: f32,
+}
+
+impl VoxelVertex {
+    /// Returns the vertex buffer layout descriptor for this vertex type.
+    pub fn vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {
+        use wgpu::{VertexAttribute, VertexFormat};
+
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<VoxelVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: VertexFormat::Float32x3,
+                },
+                VertexAttribute {
+                    offset: 12,
+                    shader_location: 1,
+                    format: VertexFormat::Float32x3,
+                },
+                VertexAttribute {
+                    offset: 24,
+                    shader_location: 2,
+                    format: VertexFormat::Float32x2,
+                },
+                VertexAttribute {
+                    offset: 32,
+                    shader_location: 3,
+                    format: VertexFormat::Uint32,
+                },
+                VertexAttribute {
+                    offset: 36,
+                    shader_location: 4,
+                    format: VertexFormat::Float32,
+                },
+            ],
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

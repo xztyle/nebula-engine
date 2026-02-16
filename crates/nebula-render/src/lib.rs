@@ -12,6 +12,7 @@ pub mod gpu_chunk_mesh;
 pub mod lens_flare;
 pub mod lit_pipeline;
 pub mod pass;
+pub mod pbr_voxel_pipeline;
 pub mod pipeline;
 pub mod shader;
 pub mod shadow_pipeline;
@@ -27,6 +28,7 @@ pub use lens_flare::{FlareElement, FlareShape, LensFlareConfig, LensFlareRendere
 // Re-export the main types from the plan
 pub use buffer::{
     BufferAllocator, IndexData, MeshBuffer, VertexPositionColor, VertexPositionNormalUv,
+    VoxelVertex,
 };
 pub use camera::{Camera, Projection};
 pub use depth::DepthBuffer;
@@ -36,6 +38,9 @@ pub use gpu_buffer_pool::GpuBufferPool;
 pub use gpu_chunk_mesh::GpuChunkMesh;
 pub use lit_pipeline::{LIT_SHADER_SOURCE, LitPipeline, draw_lit};
 pub use pass::{DepthAttachmentConfig, FrameEncoder, RenderPassBuilder, SKY_BLUE};
+pub use pbr_voxel_pipeline::{
+    PBR_VOXEL_SHADER_SOURCE, PbrCameraUniform, PbrLightUniform, PbrVoxelPipeline, draw_pbr_voxel,
+};
 pub use pipeline::{CameraUniform, UNLIT_SHADER_SOURCE, UnlitPipeline, draw_unlit};
 pub use shader::{ShaderError, ShaderLibrary};
 pub use shadow_pipeline::{SHADOW_SHADER_SOURCE, ShadowPipeline, render_shadow_cascades};
