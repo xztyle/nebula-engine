@@ -31,6 +31,30 @@ impl FaceDirection {
         Self::NegZ,
     ];
 
+    /// Returns the sweep axes for greedy meshing: `(layer_axis, u_axis, v_axis)`.
+    ///
+    /// `layer_axis` is the axis perpendicular to the face (the normal direction).
+    /// `u_axis` and `v_axis` span the face plane. Each value is 0=X, 1=Y, 2=Z.
+    pub fn sweep_axes(self) -> (usize, usize, usize) {
+        match self {
+            Self::PosX | Self::NegX => (0, 2, 1), // layer=X, u=Z, v=Y
+            Self::PosY | Self::NegY => (1, 0, 2), // layer=Y, u=X, v=Z
+            Self::PosZ | Self::NegZ => (2, 0, 1), // layer=Z, u=X, v=Y
+        }
+    }
+
+    /// Returns the unit normal as `[f32; 3]` for this face direction.
+    pub fn normal(self) -> [f32; 3] {
+        match self {
+            Self::PosX => [1.0, 0.0, 0.0],
+            Self::NegX => [-1.0, 0.0, 0.0],
+            Self::PosY => [0.0, 1.0, 0.0],
+            Self::NegY => [0.0, -1.0, 0.0],
+            Self::PosZ => [0.0, 0.0, 1.0],
+            Self::NegZ => [0.0, 0.0, -1.0],
+        }
+    }
+
     /// Returns the neighbor coordinate offset for this direction.
     pub fn offset(self, x: i32, y: i32, z: i32) -> (i32, i32, i32) {
         match self {

@@ -11,7 +11,7 @@ use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
 use nebula_cubesphere::PlanetDef;
 use nebula_mesh::{
-    ChunkNeighborhood, compute_visible_faces, count_total_faces, count_visible_faces,
+    ChunkNeighborhood, compute_visible_faces, count_total_faces, count_visible_faces, greedy_mesh,
 };
 use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
 use nebula_voxel::{
@@ -819,6 +819,52 @@ fn demonstrate_visible_face_detection() -> (u32, u32) {
     (visible, total)
 }
 
+/// Demonstrates greedy meshing by merging a flat grass plain into minimal quads.
+fn demonstrate_greedy_meshing() -> (usize, usize) {
+    info!("Starting greedy meshing demonstration");
+
+    let mut registry = VoxelTypeRegistry::new();
+    let grass_id = registry
+        .register(VoxelTypeDef {
+            name: "gm_grass".to_string(),
+            solid: true,
+            transparency: Transparency::Opaque,
+            material_index: 3,
+            light_emission: 0,
+        })
+        .expect("register grass");
+
+    // Build a flat grass plain at y=0.
+    let mut chunk = ChunkData::new_air();
+    for z in 0..32_usize {
+        for x in 0..32_usize {
+            chunk.set(x, 0, z, grass_id);
+        }
+    }
+
+    let neighbors = ChunkNeighborhood::all_air();
+    let visible = compute_visible_faces(&chunk, &neighbors, &registry);
+
+    // Count naive quads (one per visible face).
+    let naive_quads = count_visible_faces(&visible) as usize;
+
+    // Greedy mesh.
+    let mesh = greedy_mesh(&chunk, &visible, &neighbors, &registry);
+    let greedy_quads = mesh.quad_count();
+
+    info!(
+        "Quads: {} (greedy) vs {} (naive)",
+        greedy_quads, naive_quads
+    );
+    info!(
+        "Reduction: {:.1}x fewer quads",
+        naive_quads as f64 / greedy_quads.max(1) as f64
+    );
+
+    info!("Greedy meshing demonstration completed successfully");
+    (greedy_quads, naive_quads)
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -897,6 +943,9 @@ fn main() {
     // Demonstrate visible face detection
     let (visible_faces, total_faces) = demonstrate_visible_face_detection();
 
+    // Demonstrate greedy meshing
+    let (greedy_quads, naive_quads) = demonstrate_greedy_meshing();
+
     // Log initial state
     let mut demo_state = DemoState::new();
     let initial_sector = SectorCoord::from_world(&demo_state.position);
@@ -915,7 +964,11 @@ fn main() {
         chunk_version,
         demo_state.nearby_count,
         visible_faces,
-        total_faces
+        total_faces,
+    );
+    config.window.title = format!(
+        "{} - Greedy: {} quads (was {})",
+        config.window.title, greedy_quads, naive_quads
     );
 
     info!(
