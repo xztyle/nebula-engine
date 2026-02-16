@@ -3902,6 +3902,110 @@ fn demonstrate_player_join_leave() {
     info!("Player join/leave demonstration completed successfully");
 }
 
+/// Demonstrates the chat system: validation, rate limiting, and broadcast.
+fn demonstrate_chat_system() {
+    use nebula_multiplayer::interest::InterestPosition;
+    use nebula_multiplayer::{
+        ChatConfig, ChatMessageIntent, ChatRejection, ChatScope, ConnectedClient, NetworkId,
+        RateTracker, broadcast_chat, validate_chat_message,
+    };
+
+    info!("Starting chat system demonstration");
+
+    let config = ChatConfig::default();
+    let mut tracker = RateTracker::new(config.rate_limit_messages, config.rate_limit_window);
+
+    // Valid global message.
+    let intent = ChatMessageIntent {
+        scope: ChatScope::Global,
+        content: "Hello everyone!".into(),
+    };
+    assert!(validate_chat_message(&config, &mut tracker, &intent).is_ok());
+    info!("  Global message validated OK");
+
+    let msg = nebula_multiplayer::ChatMessage {
+        sender_network_id: NetworkId(1),
+        sender_name: "Alice".into(),
+        scope: ChatScope::Global,
+        content: intent.content.clone(),
+        server_tick: 42,
+        timestamp: 1_700_000_000_000,
+    };
+
+    let clients = vec![
+        ConnectedClient {
+            client_id: 2,
+            position: InterestPosition::new(0.0, 0.0, 0.0),
+        },
+        ConnectedClient {
+            client_id: 3,
+            position: InterestPosition::new(100.0, 0.0, 0.0),
+        },
+    ];
+    let recipients = broadcast_chat(
+        &msg,
+        &InterestPosition::new(0.0, 0.0, 0.0),
+        &clients,
+        &config,
+    );
+    info!("  Global broadcast → {} recipients", recipients.len());
+    assert_eq!(recipients.len(), 2);
+
+    // Proximity message.
+    let prox = ChatMessageIntent {
+        scope: ChatScope::Proximity { radius: 50.0 },
+        content: "Whisper".into(),
+    };
+    assert!(validate_chat_message(&config, &mut tracker, &prox).is_ok());
+    let prox_msg = nebula_multiplayer::ChatMessage {
+        sender_network_id: NetworkId(1),
+        sender_name: "Alice".into(),
+        scope: prox.scope.clone(),
+        content: prox.content.clone(),
+        server_tick: 43,
+        timestamp: 1_700_000_001_000,
+    };
+    let prox_recipients = broadcast_chat(
+        &prox_msg,
+        &InterestPosition::new(0.0, 0.0, 0.0),
+        &clients,
+        &config,
+    );
+    info!(
+        "  Proximity broadcast → {} recipient(s)",
+        prox_recipients.len()
+    );
+    assert_eq!(prox_recipients, vec![2]);
+
+    // Too-long message rejected.
+    let long = ChatMessageIntent {
+        scope: ChatScope::Global,
+        content: "x".repeat(600),
+    };
+    assert_eq!(
+        validate_chat_message(&config, &mut tracker, &long),
+        Err(ChatRejection::TooLong)
+    );
+    info!("  Oversized message rejected (TooLong) ✓");
+
+    // Rate limiting.
+    let mut spam_tracker = RateTracker::new(config.rate_limit_messages, config.rate_limit_window);
+    let short = ChatMessageIntent {
+        scope: ChatScope::Global,
+        content: "hi".into(),
+    };
+    for _ in 0..5 {
+        assert!(validate_chat_message(&config, &mut spam_tracker, &short).is_ok());
+    }
+    assert_eq!(
+        validate_chat_message(&config, &mut spam_tracker, &short),
+        Err(ChatRejection::RateLimited)
+    );
+    info!("  Rate limiting enforced (5/10s window) ✓");
+
+    info!("Chat system demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -4461,6 +4565,9 @@ fn main() {
 
     // Demonstrate player join/leave
     demonstrate_player_join_leave();
+
+    // Demonstrate chat system
+    demonstrate_chat_system();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {
