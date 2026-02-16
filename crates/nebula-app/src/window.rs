@@ -23,6 +23,7 @@ use nebula_render::{
     TextureManager, TexturedPipeline, UNLIT_SHADER_SOURCE, UnlitPipeline, VertexPositionColor,
     VertexPositionNormalUv, draw_textured, draw_unlit, init_render_context_blocking,
 };
+use nebula_space::{SkyboxRenderer, StarfieldCubemap, StarfieldGenerator};
 use tracing::{error, info, instrument, warn};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -150,6 +151,8 @@ pub struct AppState {
     pub impostor_state: ImpostorState,
     /// Impostor configuration.
     pub impostor_config: ImpostorConfig,
+    /// Procedural starfield skybox renderer.
+    pub skybox_renderer: Option<SkyboxRenderer>,
 }
 
 impl AppState {
@@ -204,6 +207,7 @@ impl AppState {
             impostor_renderer: None,
             impostor_state: ImpostorState::new(0.05),
             impostor_config: ImpostorConfig::default(),
+            skybox_renderer: None,
         }
     }
 
@@ -265,6 +269,7 @@ impl AppState {
             impostor_renderer: None,
             impostor_state: ImpostorState::new(0.05),
             impostor_config: ImpostorConfig::default(),
+            skybox_renderer: None,
         }
     }
 
@@ -484,6 +489,18 @@ impl AppState {
             self.impostor_config.texture_resolution, self.impostor_config.texture_resolution
         );
         self.impostor_renderer = Some(impostor);
+
+        // --- Procedural starfield skybox ---
+        let starfield_gen = StarfieldGenerator::new(42, 8000);
+        let stars = starfield_gen.generate();
+        let starfield_cubemap = StarfieldCubemap::render(&stars, 512);
+        let skybox = SkyboxRenderer::new(
+            &gpu.device,
+            &gpu.queue,
+            gpu.surface_format,
+            &starfield_cubemap,
+        );
+        self.skybox_renderer = Some(skybox);
 
         // --- Ocean surface renderer ---
         self.initialize_ocean_renderer(gpu, planet_radius);
@@ -928,6 +945,55 @@ impl ApplicationHandler for AppState {
                             let render_orbital = self.transition_blend > 0.0;
                             let render_voxels = self.transition_blend < 1.0;
 
+                            // === Pass -1: Starfield skybox ===
+                            if let Some(skybox) = &self.skybox_renderer {
+                                // Build rotation-only inverse VP for skybox
+                                let aspect = self.surface_width() as f32
+                                    / self.surface_height().max(1) as f32;
+                                let orbit_angle = self.camera_time * 0.3;
+                                let planet_radius = self
+                                    .planet_faces
+                                    .as_ref()
+                                    .map(|p| p.planet_radius as f32)
+                                    .unwrap_or(200.0);
+                                let altitude = planet_radius * 3.0;
+                                let dist = planet_radius + altitude;
+                                let tilt = 0.4_f32;
+                                // Compute view direction (rotation only, no translation)
+                                let eye = glam::Vec3::new(
+                                    (orbit_angle.sin() as f32) * dist * tilt.cos(),
+                                    dist * tilt.sin(),
+                                    (orbit_angle.cos() as f32) * dist * tilt.cos(),
+                                );
+                                let forward = (-eye).normalize();
+                                let right = forward.cross(glam::Vec3::Y).normalize();
+                                let up = right.cross(forward).normalize();
+                                // Rotation-only view matrix (3x3 -> 4x4, no translation)
+                                let view_rot = glam::Mat4::from_cols(
+                                    glam::Vec4::new(right.x, up.x, -forward.x, 0.0),
+                                    glam::Vec4::new(right.y, up.y, -forward.y, 0.0),
+                                    glam::Vec4::new(right.z, up.z, -forward.z, 0.0),
+                                    glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
+                                );
+                                let proj = glam::Mat4::perspective_rh(
+                                    70.0_f32.to_radians(),
+                                    aspect,
+                                    0.1,
+                                    100.0,
+                                );
+                                let vp_rot = proj * view_rot;
+                                let inv_vp = vp_rot.inverse();
+                                skybox.update(&gpu.queue, inv_vp);
+
+                                let pb = RenderPassBuilder::new()
+                                    .clear_color(clear_color)
+                                    .label("skybox-pass");
+                                {
+                                    let mut pass = frame_encoder.begin_render_pass(&pb);
+                                    skybox.render(&mut pass);
+                                }
+                            }
+
                             // === Pass 0: Orbital planet sphere (or clear-only) ===
                             if let (Some(orbital), Some(depth_buffer)) =
                                 (&self.orbital_renderer, &self.depth_buffer)
@@ -957,10 +1023,17 @@ impl ApplicationHandler for AppState {
                                     self.orbital_rotation,
                                 );
 
-                                let pb = RenderPassBuilder::new()
-                                    .clear_color(clear_color)
-                                    .depth(depth_buffer.view.clone(), DepthBuffer::CLEAR_VALUE)
-                                    .label("orbital-planet-pass");
+                                let pb = if self.skybox_renderer.is_some() {
+                                    RenderPassBuilder::new()
+                                        .preserve_color()
+                                        .depth(depth_buffer.view.clone(), DepthBuffer::CLEAR_VALUE)
+                                        .label("orbital-planet-pass")
+                                } else {
+                                    RenderPassBuilder::new()
+                                        .clear_color(clear_color)
+                                        .depth(depth_buffer.view.clone(), DepthBuffer::CLEAR_VALUE)
+                                        .label("orbital-planet-pass")
+                                };
                                 {
                                     let mut pass = frame_encoder.begin_render_pass(&pb);
                                     // Only draw orbital sphere when blend > 0

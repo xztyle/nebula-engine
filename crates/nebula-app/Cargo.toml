@@ -15,6 +15,7 @@ nebula-cubesphere = { path = "../nebula-cubesphere" }
 nebula-lod = { path = "../nebula-lod" }
 nebula-planet = { path = "../nebula-planet" }
 nebula-render = { path = "../nebula-render" }
+nebula-space = { path = "../nebula-space" }
 png = { workspace = true }
 wgpu = { workspace = true }
 winit = { workspace = true }

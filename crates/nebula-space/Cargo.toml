@@ -3,3 +3,11 @@ name = "nebula-space"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+
+[dependencies]
+glam = { workspace = true }
+rand = "0.9"
+rand_chacha = "0.9"
+wgpu = { workspace = true }
+log = { workspace = true }
+bytemuck = { workspace = true }
