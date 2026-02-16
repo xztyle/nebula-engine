@@ -2031,6 +2031,59 @@ fn demonstrate_distance_lod() {
     info!("Distance-based LOD demonstration completed successfully");
 }
 
+/// Demonstrates LOD-aware chunk resolution scaling.
+fn demonstrate_chunk_resolution_scaling() {
+    use nebula_voxel::{
+        LodChunkData, generate_chunk_at_lod, resolution_for_lod, voxel_size_for_lod,
+    };
+
+    info!("Starting chunk resolution scaling demonstration");
+
+    // Verify resolution and voxel size for each LOD level.
+    for lod in 0..=5u8 {
+        let res = resolution_for_lod(lod);
+        let vsize = voxel_size_for_lod(lod, 1.0);
+        let chunk = LodChunkData::new(lod);
+        info!(
+            "  LOD {}: {}x{}x{} = {} voxels, voxel size = {}m, extent = {}m",
+            lod,
+            res,
+            res,
+            res,
+            chunk.voxel_count(),
+            vsize,
+            chunk.spatial_extent(1.0),
+        );
+    }
+
+    // Generate chunks at LOD 0 and LOD 3 using the same flat terrain.
+    let flat_terrain = |_wx: f64, wy: f64, _wz: f64| -> VoxelTypeId {
+        if wy < 16.0 {
+            VoxelTypeId(1)
+        } else {
+            VoxelTypeId(0)
+        }
+    };
+
+    let lod0 = generate_chunk_at_lod((0.0, 0.0, 0.0), 0, &flat_terrain, 1.0);
+    let lod3 = generate_chunk_at_lod((0.0, 0.0, 0.0), 3, &flat_terrain, 1.0);
+
+    info!(
+        "LOD 0: {} voxels, LOD 3: {} voxels ({}x reduction)",
+        lod0.voxel_count(),
+        lod3.voxel_count(),
+        lod0.voxel_count() / lod3.voxel_count(),
+    );
+
+    // Verify spatial extent is the same.
+    assert!(
+        (lod0.spatial_extent(1.0) - lod3.spatial_extent(1.0)).abs() < f64::EPSILON,
+        "LOD 0 and LOD 3 should cover the same spatial extent"
+    );
+
+    info!("Chunk resolution scaling demonstration completed successfully");
+}
+
 /// Demonstrates per-face quadtree LOD subdivision.
 fn demonstrate_quadtree_lod_per_face() {
     use nebula_cubesphere::CubeFace;
@@ -2247,6 +2300,9 @@ fn main() {
 
     // Demonstrate distance-based LOD selection
     demonstrate_distance_lod();
+
+    // Demonstrate chunk resolution scaling
+    demonstrate_chunk_resolution_scaling();
 
     // Demonstrate per-face quadtree LOD
     demonstrate_quadtree_lod_per_face();
