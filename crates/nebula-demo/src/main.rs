@@ -11,7 +11,7 @@ use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
 use nebula_cubesphere::PlanetDef;
 use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
-use nebula_voxel::{Transparency, VoxelTypeDef, VoxelTypeRegistry};
+use nebula_voxel::{ChunkData, Transparency, VoxelTypeDef, VoxelTypeId, VoxelTypeRegistry};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use tracing::info;
@@ -339,6 +339,55 @@ fn demonstrate_voxel_registry() -> usize {
     count
 }
 
+/// Demonstrates palette-compressed chunk storage.
+fn demonstrate_palette_chunk() {
+    info!("Starting palette-compressed chunk demonstration");
+
+    // Create an all-air chunk (uniform, 0 bytes storage).
+    let air_chunk = ChunkData::new_air();
+    info!(
+        "Air chunk: {} bytes (palette: {} entry, bit_width: {})",
+        air_chunk.storage_bytes(),
+        air_chunk.palette_len(),
+        air_chunk.bit_width(),
+    );
+
+    // Create a surface-like chunk with 4 types.
+    let mut surface_chunk = ChunkData::new_air();
+    let stone = VoxelTypeId(1);
+    let dirt = VoxelTypeId(2);
+    let grass = VoxelTypeId(3);
+
+    // Fill bottom half with stone, a dirt layer, then grass on top.
+    for z in 0..32 {
+        for x in 0..32 {
+            for y in 0..16 {
+                surface_chunk.set(x, y, z, stone);
+            }
+            surface_chunk.set(x, 16, z, dirt);
+            surface_chunk.set(x, 17, z, grass);
+        }
+    }
+
+    info!(
+        "Surface chunk: {} bytes (palette: {} entries, bit_width: {})",
+        surface_chunk.storage_bytes(),
+        surface_chunk.palette_len(),
+        surface_chunk.bit_width(),
+    );
+
+    // Compare with uncompressed size.
+    let uncompressed = 32 * 32 * 32 * 2; // 65536 bytes
+    let compressed = surface_chunk.storage_bytes();
+    let ratio = uncompressed as f64 / compressed.max(1) as f64;
+    info!(
+        "Compression: {} bytes vs {} bytes uncompressed ({:.1}x savings)",
+        compressed, uncompressed, ratio,
+    );
+
+    info!("Palette-compressed chunk demonstration completed successfully");
+}
+
 /// Demonstrates cube-to-sphere projection by projecting points on each face
 /// and verifying the sphere is well-formed.
 fn main() {
@@ -391,6 +440,9 @@ fn main() {
 
     // Demonstrate voxel type registry
     let voxel_type_count = demonstrate_voxel_registry();
+
+    // Demonstrate palette-compressed chunk
+    demonstrate_palette_chunk();
 
     // Log initial state
     let mut demo_state = DemoState::new();
