@@ -260,12 +260,30 @@ pub fn update_ship(
 }
 
 /// Sync the camera to follow the ship (first-person: camera at ship position).
-pub fn sync_camera_to_ship(camera: &mut Camera, ship: &ShipState) {
+///
+/// When `is_boosting` is true, adds subtle screen shake (±0.5m random offset)
+/// to give a visceral feel to boost thrust.
+pub fn sync_camera_to_ship(camera: &mut Camera, ship: &ShipState, is_boosting: bool) {
     camera.position = Vec3::new(
         ship.position.x as f32,
         ship.position.y as f32,
         ship.position.z as f32,
     );
+
+    // Screen shake during boost: small random offset using a fast hash
+    if is_boosting {
+        // Simple pseudo-random from position bits (changes every frame)
+        let seed = (ship.position.x.to_bits() ^ ship.position.z.to_bits()) as u32;
+        let hash = |s: u32| -> f32 {
+            let h = s.wrapping_mul(2654435761);
+            (h as f32 / u32::MAX as f32) * 2.0 - 1.0
+        };
+        let shake_amount = 0.5_f32;
+        camera.position.x += hash(seed) * shake_amount;
+        camera.position.y += hash(seed.wrapping_add(1)) * shake_amount;
+        camera.position.z += hash(seed.wrapping_add(2)) * shake_amount;
+    }
+
     camera.rotation = Quat::from_xyzw(
         ship.orientation.x as f32,
         ship.orientation.y as f32,

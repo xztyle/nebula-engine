@@ -2403,6 +2403,50 @@ where
     event_loop.run_app(&mut app).expect("Event loop failed");
 }
 
+/// Run the engine with a custom input handler, title callback, and dynamic clear color.
+///
+/// Like [`run_with_config_input_and_title`] but also accepts a clear color callback
+/// invoked each frame to determine the background color (e.g. for atmosphere effects).
+/// Run the engine with a custom input handler, title callback, and dynamic clear color.
+///
+/// Like [`run_with_config_input_and_title`] but also accepts a clear color callback
+/// invoked each frame to determine the background color (e.g. for atmosphere effects).
+/// The callback returns `[r, g, b, a]` as f64 values in 0.0–1.0 range.
+pub fn run_with_config_input_title_and_clear<T, F, C>(
+    config: Config,
+    mut custom_state: T,
+    title_fn: F,
+    mut clear_color_fn: C,
+) where
+    T: FnMut(
+            f64,
+            &nebula_input::KeyboardState,
+            &nebula_input::MouseState,
+            &mut nebula_render::Camera,
+        ) + 'static,
+    F: FnMut() -> String + 'static,
+    C: FnMut(u64) -> [f64; 4] + 'static,
+{
+    let event_loop = EventLoop::new().expect("Failed to create event loop");
+    let mut app = AppState::with_config(config);
+
+    app.custom_input_update = Some(Box::new(move |dt, kb, ms, cam| {
+        custom_state(dt, kb, ms, cam);
+    }));
+    app.window_title_fn = Some(Box::new(title_fn));
+    app.clear_color_fn = Some(Box::new(move |tick| {
+        let c = clear_color_fn(tick);
+        wgpu::Color {
+            r: c[0],
+            g: c[1],
+            b: c[2],
+            a: c[3],
+        }
+    }));
+
+    event_loop.run_app(&mut app).expect("Event loop failed");
+}
+
 /// Create six colored quad meshes, one per [`CubeFace`], arranged as a cube
 /// floating at `(0, 0, -5)` with half-extent 0.6.
 fn create_cube_face_meshes(allocator: &BufferAllocator) -> Vec<MeshBuffer> {

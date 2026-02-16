@@ -137,21 +137,37 @@ pub fn update_hud(
 ///
 /// Example: `SPD: 1,234 m/s | ALT: 402.3 km | THR: 75% | HDG: 045° | FPS: 144`
 pub fn format_hud(hud: &HudState) -> String {
-    let speed = hud.speed_mps;
-    let alt_km = hud.altitude_m / 1000.0;
     let throttle = hud.throttle_pct;
     let heading = hud.heading_deg;
     let fps = hud.fps;
 
-    // Format speed with comma separator for thousands
-    let speed_str = format_with_commas(speed as u64);
+    // Speed formatting: km/s when > 1000 m/s
+    let speed_str = if hud.speed_mps > 1000.0 {
+        format!("{:.1} km/s", hud.speed_mps / 1000.0)
+    } else {
+        format!("{} m/s", format_with_commas(hud.speed_mps as u64))
+    };
+
+    // Altitude formatting: Mm when > 1000 km, km otherwise
+    let alt_str = if hud.altitude_m > 1_000_000.0 {
+        format!("{:.2} Mm", hud.altitude_m / 1_000_000.0)
+    } else {
+        format!("{:.1} km", hud.altitude_m / 1000.0)
+    };
 
     let transition = hud.transition_mode;
     let blend_pct = hud.transition_blend * 100.0;
 
+    // Supercruise indicator at high speed
+    let flight_mode = if hud.speed_mps > 2000.0 {
+        " | SUPERCRUISE"
+    } else {
+        ""
+    };
+
     // Landing/vertical speed indicators
     let landing_str = if hud.landed {
-        " | LANDED".to_string()
+        " | SURFACE | Press SPACE to launch".to_string()
     } else if hud.landing_mode {
         format!(" | LANDING MODE | VS: {:.1} m/s", hud.vertical_speed)
     } else if hud.altitude_m < 10_000.0 {
@@ -161,8 +177,7 @@ pub fn format_hud(hud: &HudState) -> String {
     };
 
     format!(
-        "SPD: {} m/s | ALT: {:.1} km | THR: {:.0}% | HDG: {:03.0}\u{00b0} | {transition}({blend_pct:.0}%){landing_str} | FPS: {:.0}",
-        speed_str, alt_km, throttle, heading, fps,
+        "SPD: {speed_str} | ALT: {alt_str} | THR: {throttle:.0}% | HDG: {heading:03.0}\u{00b0} | {transition}({blend_pct:.0}%){flight_mode}{landing_str} | FPS: {fps:.0}",
     )
 }
 
@@ -266,11 +281,49 @@ mod tests {
             ..HudState::default()
         };
         let s = format_hud(&hud);
-        assert!(s.contains("SPD: 1,234 m/s"));
+        assert!(s.contains("SPD: 1.2 km/s"), "got: {s}");
         assert!(s.contains("ALT: 402.3 km"));
         assert!(s.contains("THR: 75%"));
         assert!(s.contains("HDG: 045°"));
         assert!(s.contains("Orbital(100%)"));
         assert!(s.contains("FPS: 144"));
+    }
+
+    #[test]
+    fn test_format_hud_megameters() {
+        let hud = HudState {
+            speed_mps: 500.0,
+            altitude_m: 2_500_000.0,
+            throttle_pct: 0.0,
+            heading_deg: 0.0,
+            fps: 60.0,
+            transition_mode: "Orbital",
+            transition_blend: 1.0,
+            ..HudState::default()
+        };
+        let s = format_hud(&hud);
+        assert!(s.contains("ALT: 2.50 Mm"), "got: {s}");
+        assert!(s.contains("SPD: 500 m/s"), "got: {s}");
+    }
+
+    #[test]
+    fn test_format_hud_supercruise() {
+        let hud = HudState {
+            speed_mps: 3000.0,
+            altitude_m: 100_000.0,
+            ..HudState::default()
+        };
+        let s = format_hud(&hud);
+        assert!(s.contains("SUPERCRUISE"), "got: {s}");
+    }
+
+    #[test]
+    fn test_format_hud_landed() {
+        let hud = HudState {
+            landed: true,
+            ..HudState::default()
+        };
+        let s = format_hud(&hud);
+        assert!(s.contains("SURFACE | Press SPACE to launch"), "got: {s}");
     }
 }

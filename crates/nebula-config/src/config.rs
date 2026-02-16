@@ -129,6 +129,8 @@ pub struct PlanetConfig {
     pub free_fly_camera: bool,
     /// Free-fly camera speed in meters per second.
     pub camera_speed_m_s: f64,
+    /// Atmosphere altitude in meters (atmosphere effect starts below this altitude).
+    pub atmosphere_altitude_m: f64,
 }
 
 impl Default for PlanetConfig {
@@ -138,6 +140,7 @@ impl Default for PlanetConfig {
             start_altitude_m: 600.0,
             free_fly_camera: false,
             camera_speed_m_s: 1000.0,
+            atmosphere_altitude_m: 100_000.0,
         }
     }
 }

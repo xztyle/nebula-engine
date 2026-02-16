@@ -10,7 +10,7 @@ mod hud;
 mod planet;
 mod ship;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use clap::Parser;
@@ -79,13 +79,19 @@ fn main() {
     );
 
     let planet_radius_m = config.planet.radius_m;
+    let atmosphere_altitude_m = config.planet.atmosphere_altitude_m;
 
     // Shared HUD state between the update and title callbacks.
     let hud_state = Rc::new(RefCell::new(hud::HudState::default()));
     let hud_for_title = Rc::clone(&hud_state);
 
-    // Run the engine with both a custom input callback and a HUD title callback.
-    nebula_app::window::run_with_config_input_and_title(
+    // Shared clear color between the update callback and the clear color callback.
+    // Default to deep space black.
+    let clear_color = Rc::new(Cell::new([0.02_f64, 0.02, 0.08]));
+    let clear_color_for_render = Rc::clone(&clear_color);
+
+    // Run the engine with custom input, HUD title, and dynamic clear color.
+    nebula_app::window::run_with_config_input_title_and_clear(
         config,
         move |dt, keyboard, mouse, camera| {
             // Detect thrust and boost state for HUD throttle display.
@@ -98,7 +104,27 @@ fn main() {
             let is_boosting = keyboard.is_pressed(PhysicalKey::Code(KeyCode::ControlLeft));
 
             ship::update_ship(&mut ship_state, &ship_config, dt, keyboard, mouse);
-            ship::sync_camera_to_ship(camera, &ship_state);
+            ship::sync_camera_to_ship(camera, &ship_state, is_boosting);
+
+            // Atmospheric clear color: lerp from space black to sky blue based on altitude.
+            let altitude = (ship_state.position.length() - planet_radius_m).max(0.0);
+            let atmo_t = if atmosphere_altitude_m > 0.0 {
+                (1.0 - altitude / atmosphere_altitude_m).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            // Space color -> sky blue (0.4, 0.6, 0.9)
+            let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
+            clear_color.set([
+                lerp(0.02, 0.4, atmo_t),
+                lerp(0.02, 0.6, atmo_t),
+                lerp(0.08, 0.9, atmo_t),
+            ]);
+
+            // Reduce far plane in atmosphere for less deep-space visibility.
+            let base_far = planet_radius_m as f32 * 4.0;
+            let atmo_far = 200_000.0_f32; // 200 km visibility in thick atmosphere
+            camera.far = base_far + (atmo_far - base_far) * atmo_t as f32;
 
             // Update HUD telemetry.
             hud::update_hud(
@@ -110,5 +136,9 @@ fn main() {
             );
         },
         move || hud::format_hud(&hud_for_title.borrow()),
+        move |_tick| {
+            let c = clear_color_for_render.get();
+            [c[0], c[1], c[2], 1.0]
+        },
     );
 }

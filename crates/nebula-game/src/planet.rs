@@ -18,11 +18,15 @@ const ORBITAL_CAMERA_SPEED: f64 = 8_000.0;
 /// Create the planet configuration for an Earth-scale world.
 ///
 /// Planet center is at the origin. Camera starts 400 km above the north pole.
+/// Atmosphere altitude in meters (~100 km, Kármán line).
+const ATMOSPHERE_ALTITUDE_M: f64 = 100_000.0;
+
 pub fn earth_config() -> PlanetConfig {
     PlanetConfig {
         radius_m: EARTH_RADIUS_M,
         start_altitude_m: ISS_ALTITUDE_M,
         free_fly_camera: true,
         camera_speed_m_s: ORBITAL_CAMERA_SPEED,
+        atmosphere_altitude_m: ATMOSPHERE_ALTITUDE_M,
     }
 }
