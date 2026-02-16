@@ -33,6 +33,7 @@ members = [
     "crates/nebula-debug",
     "crates/nebula-config",
     "crates/nebula-log",
+    "crates/nebula-game",
 ]
 
 [workspace.package]

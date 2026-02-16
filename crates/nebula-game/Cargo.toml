@@ -1,0 +1,13 @@
+[package]
+name = "nebula-game"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+nebula-app = { path = "../nebula-app" }
+nebula-config = { path = "../nebula-config" }
+nebula-log = { path = "../nebula-log" }
+nebula-input = { path = "../nebula-input" }
