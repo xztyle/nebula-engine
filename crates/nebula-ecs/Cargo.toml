@@ -3,3 +3,6 @@ name = "nebula-ecs"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+
+[dependencies]
+bevy_ecs = { workspace = true }

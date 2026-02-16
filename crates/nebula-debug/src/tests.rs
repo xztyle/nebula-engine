@@ -61,6 +61,8 @@ fn test_metrics_endpoint_returns_valid_json() {
         window_height: 1080,
         uptime_seconds: 1.66,
         quit_requested: false,
+        screenshot_requested: false,
+        screenshot_data: None,
     }));
     let mut server = DebugServer::new(0);
     server.start(state).unwrap();
@@ -115,10 +117,35 @@ fn test_command_quit() {
 fn test_screenshot_returns_png() {
     let state = Arc::new(Mutex::new(DebugState::default()));
     let mut server = DebugServer::new(0);
-    server.start(state).unwrap();
+    server.start(state.clone()).unwrap();
 
     // Give server a moment to start
     thread::sleep(Duration::from_millis(100));
+
+    // Simulate a render loop that provides screenshot data when requested.
+    let sim_state = state.clone();
+    let _sim_thread = thread::spawn(move || {
+        // Create a minimal valid PNG to serve as fake screenshot data
+        let fake_png: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR chunk
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1
+            0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, // RGBA 8bit
+            0x00, 0x00, 0x00, 0x0B, 0x49, 0x44, 0x41, 0x54, // IDAT
+            0x08, 0xD7, 0x63, 0x60, 0x00, 0x02, 0x00, 0x00, 0x05, 0x00, 0x01, // data
+            0x0D, 0x0A, 0x2D, 0xB4, // CRC
+            0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, // IEND
+            0xAE, 0x42, 0x60, 0x82, // CRC
+        ];
+        loop {
+            thread::sleep(Duration::from_millis(5));
+            if let Ok(mut s) = sim_state.lock()
+                && s.screenshot_requested
+            {
+                s.screenshot_data = Some(fake_png.clone());
+            }
+        }
+    });
 
     let port = server.actual_port();
     let resp = ureq::get(&format!("http://localhost:{}/screenshot", port))

@@ -1405,6 +1405,14 @@ fn main() {
     // Demonstrate cubesphere vertex displacement
     let (disp_verts, disp_min, disp_max) = demonstrate_cubesphere_displacement();
 
+    // Initialize ECS world and schedules
+    let ecs_world = nebula_ecs::create_world();
+    let _ecs_schedules = nebula_ecs::EngineSchedules::new();
+    info!(
+        "ECS World created with {} entities",
+        ecs_world.entities().len()
+    );
+
     // Log initial state
     let mut demo_state = DemoState::new();
     let initial_sector = SectorCoord::from_world(&demo_state.position);

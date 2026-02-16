@@ -140,11 +140,36 @@ impl DebugServer {
                 )
             }
             (&Method::Get, "/screenshot") => {
-                // Return a 1x1 placeholder PNG
-                let png_bytes = Self::create_placeholder_png();
-                Response::from_data(png_bytes).with_header(
-                    Header::from_bytes(&b"Content-Type"[..], &b"image/png"[..]).unwrap(),
-                )
+                // Request a screenshot from the render loop
+                {
+                    let mut s = state.lock().unwrap();
+                    s.screenshot_data = None;
+                    s.screenshot_requested = true;
+                }
+
+                // Poll for up to 500ms waiting for the render loop to provide data
+                let mut png_data: Option<Vec<u8>> = None;
+                for _ in 0..50 {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    let mut s = state.lock().unwrap();
+                    if let Some(data) = s.screenshot_data.take() {
+                        s.screenshot_requested = false;
+                        png_data = Some(data);
+                        break;
+                    }
+                }
+
+                if let Some(data) = png_data {
+                    Response::from_data(data).with_header(
+                        Header::from_bytes(&b"Content-Type"[..], &b"image/png"[..]).unwrap(),
+                    )
+                } else {
+                    // Timeout — clear request flag and return 503
+                    if let Ok(mut s) = state.lock() {
+                        s.screenshot_requested = false;
+                    }
+                    Response::from_string("Screenshot capture timed out").with_status_code(503)
+                }
             }
             (&Method::Post, "/input") => {
                 let mut body = String::new();
@@ -198,29 +223,6 @@ impl DebugServer {
 
         request.respond(response)?;
         Ok(())
-    }
-
-    /// Creates a minimal 1x1 PNG placeholder.
-    fn create_placeholder_png() -> Vec<u8> {
-        // PNG signature + minimal IHDR + IDAT + IEND chunks for a 1x1 transparent pixel
-        vec![
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
-            0x00, 0x00, 0x00, 0x0D, // IHDR length
-            0x49, 0x48, 0x44, 0x52, // IHDR
-            0x00, 0x00, 0x00, 0x01, // width: 1
-            0x00, 0x00, 0x00, 0x01, // height: 1
-            0x08, 0x06, 0x00, 0x00,
-            0x00, // bit depth 8, color type 6 (RGBA), compression 0, filter 0, interlace 0
-            0x1F, 0x15, 0xC4, 0x89, // IHDR CRC
-            0x00, 0x00, 0x00, 0x0B, // IDAT length
-            0x49, 0x44, 0x41, 0x54, // IDAT
-            0x08, 0xD7, 0x63, 0x60, 0x00, 0x02, 0x00, 0x00, 0x05, 0x00,
-            0x01, // deflated data for transparent pixel
-            0x0D, 0x0A, 0x2D, 0xB4, // IDAT CRC
-            0x00, 0x00, 0x00, 0x00, // IEND length
-            0x49, 0x45, 0x4E, 0x44, // IEND
-            0xAE, 0x42, 0x60, 0x82, // IEND CRC
-        ]
     }
 }
 

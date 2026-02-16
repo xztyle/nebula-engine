@@ -184,6 +184,60 @@ impl FrameEncoder {
         )
     }
 
+    /// Returns a reference to the queue.
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    /// Copy the surface texture to a readback buffer for screenshot capture.
+    /// Returns `(buffer, width, height, padded_bytes_per_row)` or `None` if
+    /// the encoder has already been submitted.
+    pub fn copy_surface_to_buffer(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> Option<(wgpu::Buffer, u32, u32, u32)> {
+        let surface_tex = self.surface_texture.as_ref()?;
+        let texture = &surface_tex.texture;
+        let w = texture.width();
+        let h = texture.height();
+        let bpp = 4u32;
+        let unpadded = w * bpp;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded = unpadded.div_ceil(align) * align;
+
+        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("screenshot-readback"),
+            size: u64::from(padded * h),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let encoder = self.encoder.as_mut()?;
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        Some((buf, w, h, padded))
+    }
+
     /// Submit the command buffer to the queue and present the surface texture.
     /// Consumes self to prevent double-submission.
     pub fn submit(mut self) {

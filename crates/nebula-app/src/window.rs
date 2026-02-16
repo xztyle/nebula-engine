@@ -685,7 +685,82 @@ impl ApplicationHandler for AppState {
                                 }
                             }
 
+                            // Capture screenshot if requested by the debug API
+                            #[cfg(debug_assertions)]
+                            let screenshot_readback = if self
+                                .debug_state
+                                .lock()
+                                .map(|s| s.screenshot_requested)
+                                .unwrap_or(false)
+                            {
+                                frame_encoder.copy_surface_to_buffer(&gpu.device)
+                            } else {
+                                None
+                            };
+
                             frame_encoder.submit();
+
+                            // After submit, map the readback buffer and encode as PNG
+                            #[cfg(debug_assertions)]
+                            if let Some((readback_buffer, tex_width, tex_height, padded_row)) =
+                                screenshot_readback
+                            {
+                                let bytes_per_pixel = 4u32;
+                                let buffer_slice = readback_buffer.slice(..);
+                                let (tx, rx) = std::sync::mpsc::channel();
+                                buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+                                    let _ = tx.send(result);
+                                });
+                                let _ = gpu.device.poll(wgpu::PollType::Wait {
+                                    submission_index: None,
+                                    timeout: None,
+                                });
+
+                                if let Ok(Ok(())) = rx.recv() {
+                                    let mapped = buffer_slice.get_mapped_range();
+                                    let is_bgra = matches!(
+                                        gpu.surface_format,
+                                        wgpu::TextureFormat::Bgra8Unorm
+                                            | wgpu::TextureFormat::Bgra8UnormSrgb
+                                    );
+                                    let mut pixels =
+                                        Vec::with_capacity((tex_width * tex_height * 4) as usize);
+                                    for row in 0..tex_height {
+                                        let start = (row * padded_row) as usize;
+                                        let end = start + (tex_width * bytes_per_pixel) as usize;
+                                        let row_data = &mapped[start..end];
+                                        if is_bgra {
+                                            for chunk in row_data.chunks_exact(4) {
+                                                pixels.push(chunk[2]); // R
+                                                pixels.push(chunk[1]); // G
+                                                pixels.push(chunk[0]); // B
+                                                pixels.push(chunk[3]); // A
+                                            }
+                                        } else {
+                                            pixels.extend_from_slice(row_data);
+                                        }
+                                    }
+                                    drop(mapped);
+
+                                    let mut png_buf = Vec::new();
+                                    {
+                                        let mut encoder = png::Encoder::new(
+                                            std::io::Cursor::new(&mut png_buf),
+                                            tex_width,
+                                            tex_height,
+                                        );
+                                        encoder.set_color(png::ColorType::Rgba);
+                                        encoder.set_depth(png::BitDepth::Eight);
+                                        if let Ok(mut writer) = encoder.write_header() {
+                                            let _ = writer.write_image_data(&pixels);
+                                        }
+                                    }
+
+                                    if let Ok(mut state) = self.debug_state.lock() {
+                                        state.screenshot_data = Some(png_buf);
+                                    }
+                                }
+                            }
                         }
                         Err(nebula_render::SurfaceError::Lost) => {
                             let size = self.surface_wrapper.physical_size();

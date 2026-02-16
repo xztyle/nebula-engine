@@ -24,6 +24,12 @@ pub struct DebugState {
     pub window_height: u32,
     pub uptime_seconds: f64,
     pub quit_requested: bool,
+    /// Set to `true` by the debug server to request a screenshot capture.
+    #[serde(skip)]
+    pub screenshot_requested: bool,
+    /// PNG-encoded screenshot data populated by the render loop.
+    #[serde(skip)]
+    pub screenshot_data: Option<Vec<u8>>,
 }
 
 /// Creates a new debug server in debug builds, returns None in release builds.

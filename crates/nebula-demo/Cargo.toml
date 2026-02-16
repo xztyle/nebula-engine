@@ -23,3 +23,4 @@ glam = { workspace = true }
 nebula-cubesphere = { path = "../nebula-cubesphere" }
 nebula-voxel = { path = "../nebula-voxel" }
 nebula-mesh = { path = "../nebula-mesh" }
+nebula-ecs = { path = "../nebula-ecs" }
