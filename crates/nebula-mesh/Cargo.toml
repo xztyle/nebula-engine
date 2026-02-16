@@ -3,3 +3,6 @@ name = "nebula-mesh"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+
+[dependencies]
+nebula-voxel = { path = "../nebula-voxel" }

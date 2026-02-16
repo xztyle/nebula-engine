@@ -10,6 +10,9 @@ use clap::Parser;
 use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
 use nebula_cubesphere::PlanetDef;
+use nebula_mesh::{
+    ChunkNeighborhood, compute_visible_faces, count_total_faces, count_visible_faces,
+};
 use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
 use nebula_voxel::{
     Chunk, ChunkAddress, ChunkData, ChunkLoadConfig, ChunkLoader, ChunkManager, Transparency,
@@ -763,6 +766,59 @@ fn demonstrate_chunk_versioning() -> u64 {
     version_after_sets
 }
 
+/// Demonstrates visible face detection by building a surface chunk and
+/// showing how many faces are culled.
+fn demonstrate_visible_face_detection() -> (u32, u32) {
+    info!("Starting visible face detection demonstration");
+
+    let mut registry = VoxelTypeRegistry::new();
+    let stone_id = registry
+        .register(VoxelTypeDef {
+            name: "vfd_stone".to_string(),
+            solid: true,
+            transparency: Transparency::Opaque,
+            material_index: 1,
+            light_emission: 0,
+        })
+        .expect("register stone");
+    let glass_id = registry
+        .register(VoxelTypeDef {
+            name: "vfd_glass".to_string(),
+            solid: true,
+            transparency: Transparency::SemiTransparent,
+            material_index: 2,
+            light_emission: 0,
+        })
+        .expect("register glass");
+
+    // Build a surface chunk: stone below y=8, glass layer at y=8, air above.
+    let mut chunk = ChunkData::new_air();
+    for z in 0..32_usize {
+        for x in 0..32_usize {
+            for y in 0..8_usize {
+                chunk.set(x, y, z, stone_id);
+            }
+            chunk.set(x, 8, z, glass_id);
+        }
+    }
+
+    let neighbors = ChunkNeighborhood::all_air();
+    let faces = compute_visible_faces(&chunk, &neighbors, &registry);
+
+    let visible = count_visible_faces(&faces);
+    let total = count_total_faces(&chunk, &registry);
+
+    info!("Faces: {} visible of {} total", visible, total);
+    info!(
+        "Culled {} interior faces ({:.1}% reduction)",
+        total - visible,
+        (1.0 - visible as f64 / total as f64) * 100.0
+    );
+
+    info!("Visible face detection demonstration completed successfully");
+    (visible, total)
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -838,6 +894,9 @@ fn main() {
     // Demonstrate chunk data versioning
     let chunk_version = demonstrate_chunk_versioning();
 
+    // Demonstrate visible face detection
+    let (visible_faces, total_faces) = demonstrate_visible_face_detection();
+
     // Log initial state
     let mut demo_state = DemoState::new();
     let initial_sector = SectorCoord::from_world(&demo_state.position);
@@ -845,7 +904,7 @@ fn main() {
     // Update window title to show planet info and nearby count
     let terra = PlanetDef::earth_like("Terra", WorldPosition::default(), 42);
     config.window.title = format!(
-        "Nebula Engine - Planet: {}, radius={} mm - Registry: {} types - Chunks loaded: {} - Dirty: {}/{} - Loaded: {} - Chunk (0,0) v{} - Nearby: {} entities",
+        "Nebula Engine - Planet: {}, radius={} mm - Registry: {} types - Chunks loaded: {} - Dirty: {}/{} - Loaded: {} - Chunk (0,0) v{} - Nearby: {} entities - Faces: {} visible of {} total",
         terra.name,
         terra.radius,
         voxel_type_count,
@@ -854,7 +913,9 @@ fn main() {
         chunks_loaded,
         loaded_count,
         chunk_version,
-        demo_state.nearby_count
+        demo_state.nearby_count,
+        visible_faces,
+        total_faces
     );
 
     info!(

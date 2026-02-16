@@ -133,6 +133,22 @@ impl VoxelTypeRegistry {
     pub fn is_empty(&self) -> bool {
         self.types.len() <= 1
     }
+
+    /// Returns `true` if the given voxel type is air (ID 0).
+    pub fn is_air(&self, id: VoxelTypeId) -> bool {
+        id.0 == 0
+    }
+
+    /// Returns `true` if the given voxel type is transparent (fully or semi).
+    ///
+    /// Air is considered transparent. Returns `true` for unknown IDs as a
+    /// conservative fallback (treat missing types like air).
+    pub fn is_transparent(&self, id: VoxelTypeId) -> bool {
+        match self.types.get(id.0 as usize) {
+            Some(def) => def.transparency != Transparency::Opaque,
+            None => true,
+        }
+    }
 }
 
 impl Default for VoxelTypeRegistry {
