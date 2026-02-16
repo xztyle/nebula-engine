@@ -57,7 +57,7 @@ pub enum ChunkDecompressError {
 // ---------------------------------------------------------------------------
 
 /// Chunk data message sent from server to client.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChunkDataMessage {
     /// Which chunk this data belongs to.
     pub chunk_id: ChunkId,

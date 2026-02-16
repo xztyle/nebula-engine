@@ -3829,6 +3829,79 @@ fn demonstrate_voxel_edit_replication() {
     info!("Voxel edit replication demonstration completed successfully");
 }
 
+fn demonstrate_player_join_leave() {
+    use nebula_multiplayer::player_session::{
+        DisconnectReason, remove_player, save_player_state, spawn_player,
+    };
+    use nebula_multiplayer::{
+        AuthoritativeWorld, ConnectionRequest, DisconnectRequest, PROTOCOL_VERSION,
+        ReplicationServerSystem, ReplicationSet,
+    };
+
+    info!("Starting player join/leave demonstration");
+
+    let mut world = AuthoritativeWorld::new();
+    let mut repl = ReplicationServerSystem::new();
+    let mut rep_set = ReplicationSet::new();
+    rep_set.register::<nebula_multiplayer::replication::NetworkId>("NetworkId");
+    rep_set.register::<nebula_multiplayer::PlayerState>("PlayerState");
+
+    // Simulate connection request.
+    let req = ConnectionRequest {
+        player_name: "Alice".into(),
+        auth_token: "token_abc".into(),
+        protocol_version: PROTOCOL_VERSION,
+    };
+    info!(
+        "  ConnectionRequest: player={} proto=v{}",
+        req.player_name, req.protocol_version
+    );
+
+    // Join Alice.
+    let (entity_a, net_a) = spawn_player(&mut world, &mut repl, 1, None);
+    info!("  Alice joined: entity={entity_a:?}, net_id={net_a:?}");
+    let _ = repl.replicate(world.world(), &rep_set, world.tick());
+
+    // Join Bob.
+    let (_entity_b, net_b) = spawn_player(&mut world, &mut repl, 2, None);
+    info!("  Bob joined: net_id={net_b:?}");
+
+    // Replicate — Alice sees Bob spawn.
+    let msgs = repl.replicate(world.world(), &rep_set, world.tick());
+    if let Some(a_msgs) = msgs.get(&1) {
+        info!(
+            "  Alice received {} spawn(s) from replication",
+            a_msgs.spawns.len()
+        );
+    }
+
+    // Move Alice, then disconnect her.
+    if let Some(ps) = world.find_player_mut(1) {
+        ps.x = 5000;
+        ps.y = 3000;
+        ps.z = 1000;
+    }
+    let save = save_player_state(&world, "Alice", 1).expect("save Alice");
+    info!("  Alice saved: pos=({},{},{})", save.x, save.y, save.z);
+
+    let dc = DisconnectRequest {
+        reason: DisconnectReason::Voluntary,
+    };
+    info!("  Alice disconnecting: reason={:?}", dc.reason);
+    remove_player(&mut world, &mut repl, 1, entity_a);
+    info!("  Alice removed, player_count={}", world.player_count());
+
+    // Rejoin Alice with saved state.
+    let (_entity_a2, net_a2) = spawn_player(&mut world, &mut repl, 1, Some(&save));
+    let ps = world.find_player(1).expect("Alice rejoined");
+    info!(
+        "  Alice rejoined: net_id={net_a2:?} pos=({},{},{}) — state persisted ✓",
+        ps.x, ps.y, ps.z
+    );
+
+    info!("Player join/leave demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -4385,6 +4458,9 @@ fn main() {
 
     // Demonstrate voxel edit replication
     demonstrate_voxel_edit_replication();
+
+    // Demonstrate player join/leave
+    demonstrate_player_join_leave();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {

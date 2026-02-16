@@ -141,7 +141,7 @@ pub enum IntentValidationError {
 // ---------------------------------------------------------------------------
 
 /// Server-side canonical state for a connected player.
-#[derive(Debug, Clone, Component)]
+#[derive(Debug, Clone, Component, Serialize, Deserialize, PartialEq)]
 pub struct PlayerState {
     /// Player identifier (matches login).
     pub player_id: u64,

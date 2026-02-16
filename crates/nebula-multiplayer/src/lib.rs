@@ -4,6 +4,7 @@
 pub mod authority;
 pub mod chunk_streaming;
 pub mod interest;
+pub mod player_session;
 pub mod prediction;
 pub mod reconciliation;
 pub mod replication;
@@ -20,6 +21,10 @@ pub use chunk_streaming::{
 pub use interest::{
     ClientInterestSet, InterestArea, InterestPosition, InterestTransitions, SpatialInterestSystem,
     TrackedEntity, within_interest,
+};
+pub use player_session::{
+    AuthResult, ConnectionRequest, ConnectionState, DisconnectReason, DisconnectRequest,
+    InitialWorldState, PROTOCOL_VERSION, PlayerSaveData,
 };
 pub use prediction::{
     InputBuffer, InputEntry, MovementResult, PredictionState, client_prediction_step,
