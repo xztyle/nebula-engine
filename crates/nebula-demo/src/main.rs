@@ -2373,6 +2373,62 @@ fn demonstrate_lod_transition_seams() {
     info!("LOD transition seam demonstration completed successfully");
 }
 
+fn demonstrate_lod_memory_budget() {
+    use nebula_cubesphere::{ChunkAddress, CubeFace};
+    use nebula_lod::{ChunkMemoryUsage, MemoryBudgetConfig, MemoryBudgetTracker, select_evictions};
+    use std::collections::HashMap;
+
+    info!("Starting LOD memory budget demonstration");
+
+    // Create a 512 MB voxel / 256 MB mesh budget (low-end profile)
+    let config = MemoryBudgetConfig::low();
+    let mut tracker = MemoryBudgetTracker::new(config);
+
+    // Simulate loading 1024 chunks
+    let mut priorities = HashMap::new();
+    for i in 0..1024u32 {
+        let addr = ChunkAddress::new(CubeFace::PosY, 10, i, 0);
+        let usage = ChunkMemoryUsage::estimate(0, 200);
+        tracker.on_chunk_loaded(addr, usage);
+        // Priority decreases with distance (higher i = farther = lower priority)
+        priorities.insert(addr, 1000.0 - f64::from(i));
+    }
+
+    let total_mb =
+        (tracker.total_voxel_bytes() + tracker.total_mesh_bytes()) as f64 / (1024.0 * 1024.0);
+    let budget_mb = (512 + 256) as f64;
+    info!(
+        "  Memory: {:.1} / {:.0} MB (chunks: {})",
+        total_mb,
+        budget_mb,
+        tracker.loaded_chunk_count()
+    );
+
+    // Check if over budget and evict if needed
+    if tracker.is_over_budget() {
+        let evictions = select_evictions(&tracker, &priorities);
+        info!(
+            "  Over budget! Evicting {} lowest-priority chunks",
+            evictions.len()
+        );
+        for addr in &evictions {
+            tracker.on_chunk_unloaded(addr);
+        }
+        let after_mb =
+            (tracker.total_voxel_bytes() + tracker.total_mesh_bytes()) as f64 / (1024.0 * 1024.0);
+        info!(
+            "  After eviction: {:.1} MB (chunks: {})",
+            after_mb,
+            tracker.loaded_chunk_count()
+        );
+        assert!(!tracker.is_over_budget());
+    } else {
+        info!("  Within budget, no eviction needed");
+    }
+
+    info!("LOD memory budget demonstration completed successfully");
+}
+
 /// Configure system ordering constraints for all engine stages.
 fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
@@ -2532,6 +2588,9 @@ fn main() {
 
     // Demonstrate LOD transition seam elimination
     demonstrate_lod_transition_seams();
+
+    // Demonstrate LOD memory budget
+    demonstrate_lod_memory_budget();
 
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
