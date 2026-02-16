@@ -718,6 +718,51 @@ fn demonstrate_voxel_events() {
     info!("Voxel modification events demonstration completed successfully");
 }
 
+/// Demonstrates chunk data versioning and serialization round-trip.
+fn demonstrate_chunk_versioning() -> u64 {
+    info!("Starting chunk data versioning demonstration");
+
+    let mut chunk = Chunk::new();
+    assert_eq!(chunk.version(), 0);
+
+    // Modify voxels and track version increments.
+    let stone = VoxelTypeId(1);
+    let dirt = VoxelTypeId(2);
+    for i in 0u8..32 {
+        chunk.set(i, 0, 0, stone);
+    }
+    for i in 0u8..15 {
+        chunk.set(i, 1, 0, dirt);
+    }
+    let version_after_sets = chunk.version();
+    info!(
+        "Chunk version after 47 modifications: {}",
+        version_after_sets
+    );
+    assert_eq!(version_after_sets, 47);
+
+    // Serialize with version, round-trip, verify.
+    let bytes = chunk.serialize();
+    let restored = Chunk::deserialize(&bytes).expect("chunk deserialize failed");
+    assert_eq!(restored.version(), version_after_sets);
+    info!(
+        "Version survives serialization: {} == {}",
+        restored.version(),
+        version_after_sets
+    );
+
+    // Verify voxel data integrity.
+    for i in 0u8..32 {
+        assert_eq!(restored.get(i, 0, 0), stone);
+    }
+    for i in 0u8..15 {
+        assert_eq!(restored.get(i, 1, 0), dirt);
+    }
+
+    info!("Chunk data versioning demonstration completed successfully");
+    version_after_sets
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -790,6 +835,9 @@ fn main() {
     // Demonstrate voxel modification events
     demonstrate_voxel_events();
 
+    // Demonstrate chunk data versioning
+    let chunk_version = demonstrate_chunk_versioning();
+
     // Log initial state
     let mut demo_state = DemoState::new();
     let initial_sector = SectorCoord::from_world(&demo_state.position);
@@ -797,7 +845,7 @@ fn main() {
     // Update window title to show planet info and nearby count
     let terra = PlanetDef::earth_like("Terra", WorldPosition::default(), 42);
     config.window.title = format!(
-        "Nebula Engine - Planet: {}, radius={} mm - Registry: {} types - Chunks loaded: {} - Dirty: {}/{} - Loaded: {} - Nearby: {} entities",
+        "Nebula Engine - Planet: {}, radius={} mm - Registry: {} types - Chunks loaded: {} - Dirty: {}/{} - Loaded: {} - Chunk (0,0) v{} - Nearby: {} entities",
         terra.name,
         terra.radius,
         voxel_type_count,
@@ -805,6 +853,7 @@ fn main() {
         dirty_count,
         chunks_loaded,
         loaded_count,
+        chunk_version,
         demo_state.nearby_count
     );
 

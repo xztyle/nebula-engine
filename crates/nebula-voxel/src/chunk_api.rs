@@ -5,6 +5,7 @@
 //! handled gracefully without panics.
 
 use crate::chunk::{CHUNK_SIZE, ChunkData};
+use crate::chunk_serial::ChunkSerError;
 use crate::cow_chunk::CowChunk;
 use crate::registry::VoxelTypeId;
 
@@ -134,6 +135,47 @@ impl Chunk {
     /// Returns the palette length of the underlying storage.
     pub fn palette_len(&self) -> usize {
         self.data.get().palette_len()
+    }
+
+    /// Serializes this chunk (voxel data + version) to a byte vector.
+    ///
+    /// The format is the NVCK voxel data followed by 8 bytes for the
+    /// version counter (`u64`, little-endian).
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut buf = self.data.get().serialize();
+        buf.extend_from_slice(&self.version.to_le_bytes());
+        buf
+    }
+
+    /// Deserializes a chunk from a byte slice produced by [`Chunk::serialize`].
+    ///
+    /// Reads the NVCK voxel data and the trailing 8-byte version counter.
+    /// Dirty flags are reset to zero on deserialization.
+    pub fn deserialize(data: &[u8]) -> Result<Self, ChunkSerError> {
+        if data.len() < 8 {
+            return Err(ChunkSerError::Truncated {
+                expected: 8,
+                actual: data.len(),
+            });
+        }
+        // The last 8 bytes are the version; everything before is ChunkData.
+        let split = data.len() - 8;
+        let chunk_data = ChunkData::deserialize(&data[..split])?;
+        let version = u64::from_le_bytes([
+            data[split],
+            data[split + 1],
+            data[split + 2],
+            data[split + 3],
+            data[split + 4],
+            data[split + 5],
+            data[split + 6],
+            data[split + 7],
+        ]);
+        Ok(Self {
+            data: CowChunk::new(chunk_data),
+            dirty: 0,
+            version,
+        })
     }
 
     /// Checks whether `(x, y, z)` are all within `[0, 32)`.
@@ -292,5 +334,55 @@ mod tests {
         chunk.fill(VoxelTypeId(5));
         assert_ne!(chunk.dirty_flags(), 0);
         assert_eq!(chunk.version(), 1);
+    }
+
+    #[test]
+    fn test_new_chunk_version_is_zero() {
+        let chunk = Chunk::new();
+        assert_eq!(chunk.version(), 0);
+    }
+
+    #[test]
+    fn test_each_set_increments_version() {
+        let mut chunk = Chunk::new();
+        chunk.set(0, 0, 0, VoxelTypeId(1));
+        chunk.set(1, 0, 0, VoxelTypeId(2));
+        chunk.set(2, 0, 0, VoxelTypeId(3));
+        assert_eq!(chunk.version(), 3);
+        chunk.set(3, 0, 0, VoxelTypeId(4));
+        assert_eq!(chunk.version(), 4);
+    }
+
+    #[test]
+    fn test_version_survives_serialization_roundtrip() {
+        let mut chunk = Chunk::new();
+        for i in 0..5 {
+            chunk.set(i, 0, 0, VoxelTypeId(1));
+        }
+        assert_eq!(chunk.version(), 5);
+
+        let bytes = chunk.serialize();
+        let restored = Chunk::deserialize(&bytes).expect("deserialize failed");
+        assert_eq!(restored.version(), 5);
+
+        // Verify voxel data integrity too.
+        for i in 0..5 {
+            assert_eq!(restored.get(i, 0, 0), VoxelTypeId(1));
+        }
+    }
+
+    #[test]
+    fn test_two_chunks_same_data_different_versions() {
+        let chunk_a = Chunk::new(); // version 0, all air
+
+        let mut chunk_b = Chunk::new();
+        chunk_b.set(0, 0, 0, VoxelTypeId(1)); // version 1
+        chunk_b.set(0, 0, 0, VoxelTypeId(0)); // version 2, back to air
+
+        // Both are all-air but have different versions.
+        assert_eq!(chunk_a.get(0, 0, 0), chunk_b.get(0, 0, 0));
+        assert_ne!(chunk_a.version(), chunk_b.version());
+        assert_eq!(chunk_a.version(), 0);
+        assert_eq!(chunk_b.version(), 2);
     }
 }
