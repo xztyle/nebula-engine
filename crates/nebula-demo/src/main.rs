@@ -3154,6 +3154,49 @@ fn demonstrate_reconnection_logic() {
     info!("Reconnection logic demonstration completed successfully");
 }
 
+fn demonstrate_bandwidth_monitoring() {
+    info!("Starting bandwidth monitoring demonstration");
+
+    // Create live counters and simulate network traffic
+    let counters = nebula_net::NetworkCounters::new();
+    let per_msg = nebula_net::PerMessageCounters::new();
+
+    // Simulate sending chunk data and pings
+    counters.record_send(1200, 1500);
+    counters.record_send(4800, 6000);
+    counters.record_receive(300, 300);
+    counters.record_receive(150, 150);
+
+    per_msg.record(nebula_net::MessageTag::ChunkData, 1200);
+    per_msg.record(nebula_net::MessageTag::ChunkData, 4800);
+    per_msg.record(nebula_net::MessageTag::Ping, 300);
+    per_msg.record(nebula_net::MessageTag::Pong, 150);
+
+    // Snapshot into NetworkStats
+    let mut stats = nebula_net::NetworkStats::default();
+    nebula_net::update_network_stats(&counters, &per_msg, &mut stats);
+
+    let up_kb = stats.current.bytes_sent as f64 / 1024.0;
+    let down_kb = stats.current.bytes_received as f64 / 1024.0;
+    info!(
+        "Bandwidth: Up: {:.1} KB/s | Down: {:.1} KB/s | Msgs sent: {} | Msgs recv: {}",
+        up_kb, down_kb, stats.current.messages_sent, stats.current.messages_received,
+    );
+
+    for (tag, ms) in &stats.per_message {
+        info!("  {:?}: {} msgs, {} bytes", tag, ms.count, ms.total_bytes);
+    }
+
+    // Verify counters reset after snapshot
+    let snap2 = counters.snapshot_and_reset();
+    info!(
+        "After snapshot reset: sent={}, recv={} (should be 0)",
+        snap2.bytes_sent, snap2.bytes_received,
+    );
+
+    info!("Bandwidth monitoring demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -3588,6 +3631,20 @@ fn main() {
         entity_count,
     );
 
+    // Bandwidth monitoring in title
+    let bw_counters = nebula_net::NetworkCounters::new();
+    bw_counters.record_send(1200, 1500);
+    bw_counters.record_receive(4800, 6000);
+    let bw_per_msg = nebula_net::PerMessageCounters::new();
+    let mut bw_stats = nebula_net::NetworkStats::default();
+    nebula_net::update_network_stats(&bw_counters, &bw_per_msg, &mut bw_stats);
+    config.window.title = format!(
+        "{} - Up: {:.1} KB/s | Down: {:.1} KB/s",
+        config.window.title,
+        bw_stats.current.bytes_sent as f64 / 1024.0,
+        bw_stats.current.bytes_received as f64 / 1024.0,
+    );
+
     info!(
         "Starting demo: {}x{} \"{}\"",
         config.window.width, config.window.height, config.window.title,
@@ -3666,6 +3723,9 @@ fn main() {
 
     // Demonstrate reconnection logic
     demonstrate_reconnection_logic();
+
+    // Demonstrate bandwidth monitoring
+    demonstrate_bandwidth_monitoring();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {

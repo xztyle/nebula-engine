@@ -1,5 +1,6 @@
 //! TCP networking: connection management, message framing, serialization, and connection lifecycle.
 
+pub mod bandwidth;
 pub mod compression;
 pub mod framing;
 pub mod messages;
@@ -9,6 +10,10 @@ pub mod session;
 pub mod tcp_client;
 pub mod tcp_server;
 
+pub use bandwidth::{
+    MessageTypeStats, NetworkCounters, NetworkStats, PerMessageCounters, StatsSnapshot,
+    update_network_stats,
+};
 pub use compression::{
     COMPRESSION_FLAG_LZ4, COMPRESSION_FLAG_NONE, CompressionConfig, CompressionError,
     compress_payload, decompress_payload,
