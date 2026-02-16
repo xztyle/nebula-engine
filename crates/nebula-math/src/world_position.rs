@@ -2,6 +2,7 @@ use std::fmt;
 use std::ops::{Add, Sub};
 
 use crate::Vec3I128;
+use glam::Vec3;
 
 /// Canonical position in the universe. Each unit equals 1 millimeter.
 ///
@@ -19,6 +20,18 @@ impl WorldPosition {
     /// Create a new WorldPosition with the given coordinates.
     pub fn new(x: i128, y: i128, z: i128) -> Self {
         Self { x, y, z }
+    }
+
+    /// Convert to a camera-relative f32 position.
+    ///
+    /// Subtracts `camera` and casts each component to f32.
+    /// Precision is only valid for positions within ~10 km of the camera.
+    pub fn to_local_f32(&self, camera: &WorldPosition) -> Vec3 {
+        Vec3::new(
+            (self.x - camera.x) as f32,
+            (self.y - camera.y) as f32,
+            (self.z - camera.z) as f32,
+        )
     }
 }
 

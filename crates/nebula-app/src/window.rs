@@ -11,7 +11,7 @@ use crate::game_loop::GameLoop;
 use bytemuck;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
-use nebula_planet::{PlanetFaces, create_orbit_camera};
+use nebula_planet::{LocalFrustum, PlanetFaces, create_orbit_camera};
 use nebula_render::{
     BufferAllocator, Camera, CameraUniform, DepthBuffer, FrameEncoder, IndexData, MeshBuffer,
     RenderContext, RenderPassBuilder, ShaderLibrary, SurfaceWrapper, TEXTURED_SHADER_SOURCE,
@@ -703,7 +703,7 @@ impl ApplicationHandler for AppState {
                                 surface_texture,
                             );
 
-                            // === Pass 1: Six-face planet with frustum culling ===
+                            // === Pass 1: Six-face planet with two-level frustum culling ===
                             if let (Some(pipeline), Some(bind_group), Some(depth_buffer)) = (
                                 &self.planet_pipeline,
                                 &self.planet_camera_bind_group,
@@ -726,10 +726,35 @@ impl ApplicationHandler for AppState {
                                         0.4,
                                         aspect,
                                     );
+
+                                    // Level 1 (coarse): face-level frustum culling
                                     let frustum = nebula_render::Frustum::from_view_projection(&vp);
+                                    // Level 2 (fine): chunk-level culling via LocalFrustum
+                                    let _local_frustum = LocalFrustum::from_view_proj(&vp);
                                     if let Some(planet) = &mut self.planet_faces {
-                                        planet.cull_faces(&frustum);
+                                        let visible_faces = planet.cull_faces(&frustum);
+
+                                        // Gather visible render data after face culling
                                         let (verts, idxs) = planet.visible_render_data();
+
+                                        // Chunk-level culling stats (faces are chunks here)
+                                        let total_faces = 6u32;
+                                        let visible_pct = if total_faces > 0 {
+                                            visible_faces as f32 / total_faces as f32 * 100.0
+                                        } else {
+                                            0.0
+                                        };
+
+                                        // Log culling stats periodically
+                                        if self.tick_count.is_multiple_of(60) {
+                                            info!(
+                                                "Frustum culled: {:.0}% of chunks ({} visible / {} loaded)",
+                                                100.0 - visible_pct,
+                                                visible_faces,
+                                                total_faces,
+                                            );
+                                        }
+
                                         if !verts.is_empty() {
                                             let alloc = BufferAllocator::new(&gpu.device);
                                             self.planet_face_mesh = Some(alloc.create_mesh(

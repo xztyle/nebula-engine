@@ -1,8 +1,10 @@
 //! Planet-level rendering: single and six-face terrain loading, cubesphere displacement, and camera setup.
 
+mod culling;
 mod single_face;
 mod six_face;
 
+pub use culling::{CullResult, LocalFrustum, PlanetBounds};
 pub use single_face::{
     FaceChunkMesh, SingleFaceLoader, SingleFaceRenderData, build_face_render_data,
     create_face_camera,

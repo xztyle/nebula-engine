@@ -7,7 +7,9 @@ license.workspace = true
 [dependencies]
 glam = { workspace = true }
 bytemuck = { workspace = true }
+nebula-coords = { path = "../nebula-coords" }
 nebula-cubesphere = { path = "../nebula-cubesphere" }
+nebula-math = { path = "../nebula-math" }
 nebula-mesh = { path = "../nebula-mesh" }
 nebula-render = { path = "../nebula-render" }
 nebula-terrain = { path = "../nebula-terrain" }
