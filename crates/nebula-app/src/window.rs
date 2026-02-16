@@ -13,7 +13,8 @@ use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
 use nebula_planet::{
     AtmosphereParams, AtmosphereRenderer, DayNightState, LocalFrustum, OrbitalRenderer,
-    PlanetFaces, create_orbit_camera, generate_orbital_sphere,
+    OriginManager, PlanetFaces, TransitionConfig, chunk_budget_for_altitude, create_orbit_camera,
+    generate_orbital_sphere,
 };
 use nebula_render::{
     BufferAllocator, Camera, CameraUniform, DepthBuffer, FrameEncoder, IndexData, MeshBuffer,
@@ -130,6 +131,16 @@ pub struct AppState {
     pub orbital_renderer: Option<OrbitalRenderer>,
     /// Rotation angle for the orbital planet (radians).
     pub orbital_rotation: f32,
+    /// Surface-to-orbit transition configuration.
+    pub transition_config: TransitionConfig,
+    /// Coordinate origin manager for f32 precision.
+    pub origin_manager: OriginManager,
+    /// Current surface-to-orbit blend factor (0 = surface, 1 = orbital).
+    pub transition_blend: f32,
+    /// Current chunk budget based on altitude.
+    pub chunk_budget: u32,
+    /// Simulated camera altitude above planet surface (meters).
+    pub simulated_altitude: f64,
 }
 
 impl AppState {
@@ -175,6 +186,11 @@ impl AppState {
             day_night: DayNightState::new(1200.0), // 20 minutes per day
             orbital_renderer: None,
             orbital_rotation: 0.0,
+            transition_config: TransitionConfig::default(),
+            origin_manager: OriginManager::new(),
+            transition_blend: 0.0,
+            chunk_budget: 4096,
+            simulated_altitude: 0.0,
         }
     }
 
@@ -227,6 +243,11 @@ impl AppState {
             day_night: DayNightState::new(1200.0), // 20 minutes per day
             orbital_renderer: None,
             orbital_rotation: 0.0,
+            transition_config: TransitionConfig::default(),
+            origin_manager: OriginManager::new(),
+            transition_blend: 0.0,
+            chunk_budget: 4096,
+            simulated_altitude: 0.0,
         }
     }
 
@@ -725,6 +746,10 @@ impl ApplicationHandler for AppState {
                 let gpu = &self.gpu;
                 let day_night = &mut self.day_night;
                 let orbital_rotation = &mut self.orbital_rotation;
+                let transition_config = &self.transition_config;
+                let transition_blend = &mut self.transition_blend;
+                let chunk_budget = &mut self.chunk_budget;
+                let simulated_altitude = &mut self.simulated_altitude;
 
                 self.game_loop.tick(
                     |dt, _sim_time| {
@@ -733,6 +758,16 @@ impl ApplicationHandler for AppState {
                         day_night.tick(dt);
                         // Slow planet rotation (~1 revolution per 10 minutes)
                         *orbital_rotation += (dt as f32) * 0.01;
+
+                        // Simulate altitude oscillation: 0 → 300 km → 0 over ~60s
+                        let alt_cycle = (*camera_time * 0.1).sin().abs();
+                        *simulated_altitude = alt_cycle * 300_000.0;
+
+                        // Update transition blend and chunk budget
+                        let (_mode, blend) = transition_config.classify(*simulated_altitude);
+                        *transition_blend = blend;
+                        *chunk_budget =
+                            chunk_budget_for_altitude(*simulated_altitude, transition_config);
 
                         // Update camera to orbit around the triangle
                         let orbit_radius = 3.0f64;
@@ -787,7 +822,24 @@ impl ApplicationHandler for AppState {
                                 surface_texture,
                             );
 
-                            // === Pass 0: Orbital planet sphere ===
+                            // Log transition state periodically
+                            if self.tick_count.is_multiple_of(120) {
+                                let (mode, _) =
+                                    self.transition_config.classify(self.simulated_altitude);
+                                info!(
+                                    "Transition: alt={:.0}km, blend={:.2}, budget={}, mode={:?}",
+                                    self.simulated_altitude / 1000.0,
+                                    self.transition_blend,
+                                    self.chunk_budget,
+                                    mode,
+                                );
+                            }
+
+                            // Determine which passes to run based on blend
+                            let render_orbital = self.transition_blend > 0.0;
+                            let render_voxels = self.transition_blend < 1.0;
+
+                            // === Pass 0: Orbital planet sphere (or clear-only) ===
                             if let (Some(orbital), Some(depth_buffer)) =
                                 (&self.orbital_renderer, &self.depth_buffer)
                             {
@@ -799,7 +851,7 @@ impl ApplicationHandler for AppState {
                                     .as_ref()
                                     .map(|p| p.planet_radius as f32)
                                     .unwrap_or(200.0);
-                                let altitude = planet_radius * 3.0; // farther for orbital view
+                                let altitude = planet_radius * 3.0;
                                 let vp = create_orbit_camera(
                                     planet_radius,
                                     altitude,
@@ -822,16 +874,21 @@ impl ApplicationHandler for AppState {
                                     .label("orbital-planet-pass");
                                 {
                                     let mut pass = frame_encoder.begin_render_pass(&pb);
-                                    orbital.render(&mut pass);
+                                    // Only draw orbital sphere when blend > 0
+                                    if render_orbital {
+                                        orbital.render(&mut pass);
+                                    }
                                 }
                             }
 
                             // === Pass 1: Six-face planet with two-level frustum culling ===
-                            if let (Some(pipeline), Some(bind_group), Some(depth_buffer)) = (
-                                &self.planet_pipeline,
-                                &self.planet_camera_bind_group,
-                                &self.depth_buffer,
-                            ) {
+                            if render_voxels
+                                && let (Some(pipeline), Some(bind_group), Some(depth_buffer)) = (
+                                    &self.planet_pipeline,
+                                    &self.planet_camera_bind_group,
+                                    &self.depth_buffer,
+                                )
+                            {
                                 if let Some(planet_buf) = &self.planet_camera_buffer {
                                     let aspect = self.surface_width() as f32
                                         / self.surface_height().max(1) as f32;

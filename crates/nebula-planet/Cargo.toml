@@ -10,6 +10,7 @@ bytemuck = { workspace = true }
 wgpu = { workspace = true }
 nebula-coords = { path = "../nebula-coords" }
 nebula-cubesphere = { path = "../nebula-cubesphere" }
+nebula-lod = { path = "../nebula-lod" }
 nebula-math = { path = "../nebula-math" }
 nebula-mesh = { path = "../nebula-mesh" }
 nebula-render = { path = "../nebula-render" }

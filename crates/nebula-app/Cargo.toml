@@ -12,6 +12,7 @@ tracing = "0.1"
 nebula-config = { path = "../nebula-config" }
 nebula-debug = { path = "../nebula-debug" }
 nebula-cubesphere = { path = "../nebula-cubesphere" }
+nebula-lod = { path = "../nebula-lod" }
 nebula-planet = { path = "../nebula-planet" }
 nebula-render = { path = "../nebula-render" }
 png = { workspace = true }
