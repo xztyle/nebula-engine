@@ -14,6 +14,7 @@ pub mod lit_pipeline;
 pub mod pass;
 pub mod pipeline;
 pub mod shader;
+pub mod shadow_pipeline;
 pub mod surface;
 pub mod texture;
 pub mod textured_pipeline;
@@ -37,6 +38,7 @@ pub use lit_pipeline::{LIT_SHADER_SOURCE, LitPipeline, draw_lit};
 pub use pass::{DepthAttachmentConfig, FrameEncoder, RenderPassBuilder, SKY_BLUE};
 pub use pipeline::{CameraUniform, UNLIT_SHADER_SOURCE, UnlitPipeline, draw_unlit};
 pub use shader::{ShaderError, ShaderLibrary};
+pub use shadow_pipeline::{SHADOW_SHADER_SOURCE, ShadowPipeline, render_shadow_cascades};
 pub use surface::{MIN_SURFACE_DIMENSION, PhysicalSize, SurfaceResizeEvent, SurfaceWrapper};
 pub use texture::{
     ManagedTexture, TextureError, TextureLayerData, TextureManager, mip_level_count,

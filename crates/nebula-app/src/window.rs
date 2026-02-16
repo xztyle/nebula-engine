@@ -11,7 +11,10 @@ use crate::game_loop::GameLoop;
 use bytemuck;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
-use nebula_lighting::{DirectionalLight, PointLight, PointLightFrustum, PointLightManager};
+use nebula_lighting::{
+    CascadedShadowConfig, CascadedShadowMaps, DirectionalLight, PointLight, PointLightFrustum,
+    PointLightManager,
+};
 use nebula_planet::{
     AtmosphereParams, AtmosphereRenderer, DayNightState, ImpostorConfig, ImpostorRenderer,
     ImpostorState, LocalFrustum, OceanParams, OceanRenderer, OrbitalRenderer, OriginManager,
@@ -21,9 +24,10 @@ use nebula_planet::{
 use nebula_render::{
     BloomConfig, BloomPipeline, BufferAllocator, Camera, CameraUniform, DepthBuffer, FrameEncoder,
     IndexData, LIT_SHADER_SOURCE, LitPipeline, MeshBuffer, RenderContext, RenderPassBuilder,
-    ShaderLibrary, SurfaceWrapper, TEXTURED_SHADER_SOURCE, TextureManager, TexturedPipeline,
-    UNLIT_SHADER_SOURCE, UnlitPipeline, VertexPositionColor, VertexPositionNormalUv, draw_lit,
-    draw_textured, draw_unlit, init_render_context_blocking,
+    SHADOW_SHADER_SOURCE, ShaderLibrary, ShadowPipeline, SurfaceWrapper, TEXTURED_SHADER_SOURCE,
+    TextureManager, TexturedPipeline, UNLIT_SHADER_SOURCE, UnlitPipeline, VertexPositionColor,
+    VertexPositionNormalUv, draw_lit, draw_textured, draw_unlit, init_render_context_blocking,
+    render_shadow_cascades,
 };
 use nebula_space::{
     DistantPlanet, ImpostorInstance, NebulaConfig, NebulaGenerator, OrbitalElements,
@@ -179,6 +183,18 @@ pub struct AppState {
     pub distant_impostor: Option<PlanetImpostorRenderer>,
     /// Distant planets with orbital elements for impostor rendering.
     pub distant_planets: Vec<(DistantPlanet, OrbitalElements)>,
+    /// Cascaded shadow map resources.
+    pub shadow_maps: Option<CascadedShadowMaps>,
+    /// Shadow depth-only render pipeline.
+    pub shadow_pipeline: Option<ShadowPipeline>,
+    /// GPU buffer for shadow uniform data.
+    pub shadow_uniform_buffer: Option<wgpu::Buffer>,
+    /// Per-cascade light matrix uniform buffers for shadow rendering.
+    pub shadow_cascade_buffers: Vec<wgpu::Buffer>,
+    /// Per-cascade bind groups for the shadow depth pass.
+    pub shadow_cascade_bind_groups: Vec<wgpu::BindGroup>,
+    /// Shadow bind group for the lit pipeline (group 2).
+    pub shadow_bind_group: Option<wgpu::BindGroup>,
 }
 
 impl AppState {
@@ -244,6 +260,12 @@ impl AppState {
             lens_flare: None,
             distant_impostor: None,
             distant_planets: Vec::new(),
+            shadow_maps: None,
+            shadow_pipeline: None,
+            shadow_uniform_buffer: None,
+            shadow_cascade_buffers: Vec::new(),
+            shadow_cascade_bind_groups: Vec::new(),
+            shadow_bind_group: None,
         }
     }
 
@@ -316,6 +338,12 @@ impl AppState {
             lens_flare: None,
             distant_impostor: None,
             distant_planets: Vec::new(),
+            shadow_maps: None,
+            shadow_pipeline: None,
+            shadow_uniform_buffer: None,
+            shadow_cascade_buffers: Vec::new(),
+            shadow_cascade_bind_groups: Vec::new(),
+            shadow_bind_group: None,
         }
     }
 
@@ -778,6 +806,9 @@ impl AppState {
         self.light_bind_group = Some(light_bind_group);
         self.point_light_buffer = Some(point_light_buffer);
 
+        // --- Cascaded Shadow Maps ---
+        self.initialize_shadow_maps(gpu, &mut shader_library, &planet_pipeline);
+
         let planet = PlanetFaces::new_demo(1, 42);
         // Add demo point lights on the planet surface.
         self.initialize_demo_point_lights(planet.planet_radius as f32);
@@ -848,6 +879,90 @@ impl AppState {
             "Demo point lights: {} placed on planet surface",
             self.point_light_manager.len()
         );
+    }
+
+    /// Initialize cascaded shadow map resources.
+    fn initialize_shadow_maps(
+        &mut self,
+        gpu: &RenderContext,
+        shader_library: &mut ShaderLibrary,
+        planet_pipeline: &LitPipeline,
+    ) {
+        use wgpu::util::DeviceExt;
+
+        let config = CascadedShadowConfig::default();
+        let shadow_maps = CascadedShadowMaps::new(&gpu.device, &config);
+
+        // Shadow depth-only pipeline
+        let shadow_shader = shader_library
+            .load_from_source(&gpu.device, "shadow-depth", SHADOW_SHADER_SOURCE)
+            .expect("Failed to load shadow shader");
+        let shadow_pipe = ShadowPipeline::new(&gpu.device, &shadow_shader);
+
+        // Per-cascade light matrix buffers and bind groups
+        let mut cascade_buffers = Vec::with_capacity(config.cascade_count as usize);
+        let mut cascade_bind_groups = Vec::with_capacity(config.cascade_count as usize);
+        for i in 0..config.cascade_count as usize {
+            let buf = gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("shadow-cascade-{i}-matrix")),
+                    contents: bytemuck::cast_slice(&shadow_maps.light_matrices[i].to_cols_array()),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
+            let bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("shadow-cascade-{i}-bg")),
+                layout: &shadow_pipe.light_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buf.as_entire_binding(),
+                }],
+            });
+            cascade_buffers.push(buf);
+            cascade_bind_groups.push(bg);
+        }
+
+        // Shadow uniform buffer (for fragment shader sampling)
+        let shadow_uniform = shadow_maps.to_uniform();
+        let shadow_uniform_buffer =
+            gpu.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("shadow-uniform"),
+                    contents: bytemuck::cast_slice(&[shadow_uniform]),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
+
+        // Shadow bind group for the lit pipeline (group 2)
+        let shadow_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow-bind-group"),
+            layout: &planet_pipeline.shadow_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: shadow_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&shadow_maps.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&shadow_maps.sampler),
+                },
+            ],
+        });
+
+        info!(
+            "Cascaded shadow maps initialized: {} cascades, {}x{} resolution",
+            config.cascade_count, config.resolution, config.resolution
+        );
+
+        self.shadow_maps = Some(shadow_maps);
+        self.shadow_pipeline = Some(shadow_pipe);
+        self.shadow_uniform_buffer = Some(shadow_uniform_buffer);
+        self.shadow_cascade_buffers = cascade_buffers;
+        self.shadow_cascade_bind_groups = cascade_bind_groups;
+        self.shadow_bind_group = Some(shadow_bind_group);
     }
 
     /// Updates the debug state with current frame metrics.
@@ -1556,15 +1671,13 @@ impl ApplicationHandler for AppState {
                                     }
 
                                     // Upload point lights (cull against current frustum).
+                                    let cam_dist_f64 = planet_radius as f64 + altitude as f64;
+                                    let cam_pos = glam::Vec3::new(
+                                        (orbit_angle.cos() * 0.4_f64.cos() * cam_dist_f64) as f32,
+                                        (0.4_f64.sin() * cam_dist_f64) as f32,
+                                        (orbit_angle.sin() * 0.4_f64.cos() * cam_dist_f64) as f32,
+                                    );
                                     if let Some(pl_buf) = &self.point_light_buffer {
-                                        let cam_dist_f64 = planet_radius as f64 + altitude as f64;
-                                        let cam_pos = glam::Vec3::new(
-                                            (orbit_angle.cos() * 0.4_f64.cos() * cam_dist_f64)
-                                                as f32,
-                                            (0.4_f64.sin() * cam_dist_f64) as f32,
-                                            (orbit_angle.sin() * 0.4_f64.cos() * cam_dist_f64)
-                                                as f32,
-                                        );
                                         let pl_frustum =
                                             PointLightFrustum::from_planes(frustum.planes());
                                         self.point_light_manager.cull_and_upload(
@@ -1574,8 +1687,57 @@ impl ApplicationHandler for AppState {
                                             pl_buf,
                                         );
                                     }
+
+                                    // Update shadow cascade matrices.
+                                    if let Some(shadow_maps) = &mut self.shadow_maps {
+                                        let light_dir = self.sun_light.direction;
+                                        let inv_vp = vp.inverse();
+                                        shadow_maps.update_matrices(light_dir, inv_vp, 0.1);
+
+                                        // Upload per-cascade light matrices.
+                                        for (i, buf) in
+                                            self.shadow_cascade_buffers.iter().enumerate()
+                                        {
+                                            gpu.queue.write_buffer(
+                                                buf,
+                                                0,
+                                                bytemuck::cast_slice(
+                                                    &shadow_maps.light_matrices[i].to_cols_array(),
+                                                ),
+                                            );
+                                        }
+
+                                        // Upload shadow uniform for fragment shader.
+                                        if let Some(sub) = &self.shadow_uniform_buffer {
+                                            let su = shadow_maps.to_uniform();
+                                            gpu.queue.write_buffer(
+                                                sub,
+                                                0,
+                                                bytemuck::cast_slice(&[su]),
+                                            );
+                                        }
+                                    }
                                 }
-                                if let Some(planet_mesh) = &self.planet_face_mesh {
+
+                                // Render shadow cascades (depth-only passes).
+                                if let (Some(shadow_pipe), Some(planet_mesh), Some(shadow_maps)) = (
+                                    &self.shadow_pipeline,
+                                    &self.planet_face_mesh,
+                                    &self.shadow_maps,
+                                ) {
+                                    let (encoder, _) = frame_encoder.encoder_and_view();
+                                    render_shadow_cascades(
+                                        encoder,
+                                        shadow_pipe,
+                                        &shadow_maps.cascade_views,
+                                        &self.shadow_cascade_bind_groups,
+                                        planet_mesh,
+                                    );
+                                }
+
+                                if let (Some(planet_mesh), Some(shadow_bg)) =
+                                    (&self.planet_face_mesh, &self.shadow_bind_group)
+                                {
                                     let pb = RenderPassBuilder::new()
                                         .preserve_color()
                                         .depth(depth_buffer.view.clone(), DepthBuffer::CLEAR_VALUE)
@@ -1587,6 +1749,7 @@ impl ApplicationHandler for AppState {
                                             pipeline,
                                             cam_bg,
                                             light_bg,
+                                            shadow_bg,
                                             planet_mesh,
                                         );
                                     }
