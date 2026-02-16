@@ -195,6 +195,12 @@ pub struct AppState {
     pub shadow_cascade_bind_groups: Vec<wgpu::BindGroup>,
     /// Shadow bind group for the lit pipeline (group 2).
     pub shadow_bind_group: Option<wgpu::BindGroup>,
+    /// PBR material for planet terrain.
+    pub pbr_material: nebula_lighting::PbrMaterial,
+    /// GPU buffer for PBR material uniform.
+    pub material_buffer: Option<wgpu::Buffer>,
+    /// Bind group for PBR material uniform (group 3).
+    pub material_bind_group: Option<wgpu::BindGroup>,
 }
 
 impl AppState {
@@ -266,6 +272,9 @@ impl AppState {
             shadow_cascade_buffers: Vec::new(),
             shadow_cascade_bind_groups: Vec::new(),
             shadow_bind_group: None,
+            pbr_material: nebula_lighting::PbrMaterial::stone(),
+            material_buffer: None,
+            material_bind_group: None,
         }
     }
 
@@ -344,6 +353,9 @@ impl AppState {
             shadow_cascade_buffers: Vec::new(),
             shadow_cascade_bind_groups: Vec::new(),
             shadow_bind_group: None,
+            pbr_material: nebula_lighting::PbrMaterial::stone(),
+            material_buffer: None,
+            material_bind_group: None,
         }
     }
 
@@ -809,6 +821,9 @@ impl AppState {
         // --- Cascaded Shadow Maps ---
         self.initialize_shadow_maps(gpu, &mut shader_library, &planet_pipeline);
 
+        // --- PBR Material Uniform ---
+        self.initialize_pbr_material(gpu, &planet_pipeline);
+
         let planet = PlanetFaces::new_demo(1, 42);
         // Add demo point lights on the planet surface.
         self.initialize_demo_point_lights(planet.planet_radius as f32);
@@ -829,6 +844,7 @@ impl AppState {
         let vp = create_orbit_camera(planet_radius as f32, 200.0, 0.0, 0.6, aspect);
         let uniform = CameraUniform {
             view_proj: vp.to_cols_array_2d(),
+            camera_pos: [0.0, 0.0, 0.0, 0.0],
         };
         let buffer = gpu
             .device
@@ -879,6 +895,30 @@ impl AppState {
             "Demo point lights: {} placed on planet surface",
             self.point_light_manager.len()
         );
+    }
+
+    /// Initialize PBR material uniform buffer and bind group.
+    fn initialize_pbr_material(&mut self, gpu: &RenderContext, planet_pipeline: &LitPipeline) {
+        use wgpu::util::DeviceExt;
+
+        let mat_uniform = self.pbr_material.to_uniform();
+        let material_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pbr-material-uniform"),
+                contents: bytemuck::cast_slice(&[mat_uniform]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+        let material_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("pbr-material-bind-group"),
+            layout: &planet_pipeline.material_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: material_buffer.as_entire_binding(),
+            }],
+        });
+        self.material_buffer = Some(material_buffer);
+        self.material_bind_group = Some(material_bind_group);
     }
 
     /// Initialize cascaded shadow map resources.
@@ -1648,8 +1688,24 @@ impl ApplicationHandler for AppState {
                                             ));
                                         }
                                     }
+                                    // Compute camera position for PBR view direction.
+                                    let cam_dist_f64_planet =
+                                        planet_radius as f64 + altitude as f64;
+                                    let planet_cam_pos = glam::Vec3::new(
+                                        (orbit_angle.cos() * 0.4_f64.cos() * cam_dist_f64_planet)
+                                            as f32,
+                                        (0.4_f64.sin() * cam_dist_f64_planet) as f32,
+                                        (orbit_angle.sin() * 0.4_f64.cos() * cam_dist_f64_planet)
+                                            as f32,
+                                    );
                                     let uniform = CameraUniform {
                                         view_proj: vp.to_cols_array_2d(),
+                                        camera_pos: [
+                                            planet_cam_pos.x,
+                                            planet_cam_pos.y,
+                                            planet_cam_pos.z,
+                                            0.0,
+                                        ],
                                     };
                                     gpu.queue.write_buffer(
                                         planet_buf,
@@ -1735,9 +1791,11 @@ impl ApplicationHandler for AppState {
                                     );
                                 }
 
-                                if let (Some(planet_mesh), Some(shadow_bg)) =
-                                    (&self.planet_face_mesh, &self.shadow_bind_group)
-                                {
+                                if let (Some(planet_mesh), Some(shadow_bg), Some(mat_bg)) = (
+                                    &self.planet_face_mesh,
+                                    &self.shadow_bind_group,
+                                    &self.material_bind_group,
+                                ) {
                                     let pb = RenderPassBuilder::new()
                                         .preserve_color()
                                         .depth(depth_buffer.view.clone(), DepthBuffer::CLEAR_VALUE)
@@ -1750,6 +1808,7 @@ impl ApplicationHandler for AppState {
                                             cam_bg,
                                             light_bg,
                                             shadow_bg,
+                                            mat_bg,
                                             planet_mesh,
                                         );
                                     }

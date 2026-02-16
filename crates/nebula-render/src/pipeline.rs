@@ -5,11 +5,14 @@ use std::num::NonZeroU64;
 
 use crate::buffer::{MeshBuffer, VertexPositionColor};
 
-/// Uniform buffer for camera view-projection matrix.
+/// Uniform buffer for camera view-projection matrix and camera position.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct CameraUniform {
-    pub view_proj: [[f32; 4]; 4], // 64 bytes, mat4x4
+    /// View-projection matrix (64 bytes).
+    pub view_proj: [[f32; 4]; 4],
+    /// Camera position in world space (xyz) + padding (w). 16 bytes.
+    pub camera_pos: [f32; 4],
 }
 
 /// Basic unlit rendering pipeline for colored geometry.
@@ -35,7 +38,7 @@ impl UnlitPipeline {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(64), // mat4x4<f32>
+                        min_binding_size: NonZeroU64::new(80), // CameraUniform: mat4x4 + vec4
                     },
                     count: None,
                 }],
@@ -245,8 +248,8 @@ mod tests {
 
     #[test]
     fn test_camera_uniform_size() {
-        // The CameraUniform must be exactly 64 bytes (one mat4x4<f32>).
-        assert_eq!(std::mem::size_of::<CameraUniform>(), 64);
+        // The CameraUniform must be exactly 80 bytes (mat4x4 + vec4).
+        assert_eq!(std::mem::size_of::<CameraUniform>(), 80);
     }
 
     #[test]
@@ -259,7 +262,7 @@ mod tests {
         // Verified by successfully creating a bind group with a single buffer.
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("test-camera"),
-            size: 64,
+            size: 80,
             usage: wgpu::BufferUsages::UNIFORM,
             mapped_at_creation: false,
         });

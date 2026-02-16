@@ -11,7 +11,7 @@ use std::num::NonZeroU64;
 
 use crate::buffer::{MeshBuffer, VertexPositionColor};
 
-/// Lit rendering pipeline: camera at group 0, light at group 1, shadows at group 2.
+/// Lit rendering pipeline: camera at group 0, light at group 1, shadows at group 2, material at group 3.
 pub struct LitPipeline {
     /// The underlying wgpu render pipeline.
     pub pipeline: wgpu::RenderPipeline,
@@ -21,6 +21,8 @@ pub struct LitPipeline {
     pub light_bind_group_layout: wgpu::BindGroupLayout,
     /// Shadow map bind group layout (group 2).
     pub shadow_bind_group_layout: wgpu::BindGroupLayout,
+    /// PBR material uniform bind group layout (group 3).
+    pub material_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl LitPipeline {
@@ -37,11 +39,11 @@ impl LitPipeline {
                 label: Some("lit-camera-bgl"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(64), // mat4x4<f32>
+                        min_binding_size: NonZeroU64::new(80), // CameraUniform: mat4x4 + vec4
                     },
                     count: None,
                 }],
@@ -110,12 +112,28 @@ impl LitPipeline {
                 ],
             });
 
+        let material_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("lit-material-bgl"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(32), // PbrMaterialUniform
+                    },
+                    count: None,
+                }],
+            });
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("lit-pipeline-layout"),
             bind_group_layouts: &[
                 &camera_bind_group_layout,
                 &light_bind_group_layout,
                 &shadow_bind_group_layout,
+                &material_bind_group_layout,
             ],
             immediate_size: 0,
         });
@@ -171,35 +189,41 @@ impl LitPipeline {
             camera_bind_group_layout,
             light_bind_group_layout,
             shadow_bind_group_layout,
+            material_bind_group_layout,
         }
     }
 }
 
-/// Draw lit geometry with camera, light, and shadow bind groups.
+/// Draw lit geometry with camera, light, shadow, and material bind groups.
 pub fn draw_lit<'a>(
     render_pass: &mut wgpu::RenderPass<'a>,
     pipeline: &LitPipeline,
     camera_bind_group: &'a wgpu::BindGroup,
     light_bind_group: &'a wgpu::BindGroup,
     shadow_bind_group: &'a wgpu::BindGroup,
+    material_bind_group: &'a wgpu::BindGroup,
     mesh: &'a MeshBuffer,
 ) {
     render_pass.set_pipeline(&pipeline.pipeline);
     render_pass.set_bind_group(0, camera_bind_group, &[]);
     render_pass.set_bind_group(1, light_bind_group, &[]);
     render_pass.set_bind_group(2, shadow_bind_group, &[]);
+    render_pass.set_bind_group(3, material_bind_group, &[]);
     mesh.bind(render_pass);
     mesh.draw(render_pass);
 }
 
-/// WGSL shader source for lit planet rendering with cascaded shadow maps.
+/// WGSL shader source for lit planet rendering with PBR shading and cascaded shadow maps.
 ///
-/// Computes normal from world position (assumes sphere at origin).
-/// Applies N·L diffuse lighting plus a small ambient term.
-/// Samples the correct shadow cascade with smooth blending at boundaries.
+/// Implements Cook-Torrance BRDF with GGX distribution, Schlick Fresnel,
+/// and Smith geometry terms. Material properties come from a uniform buffer
+/// (group 3). Vertex color modulates the material albedo.
 pub const LIT_SHADER_SOURCE: &str = r#"
+const PI: f32 = 3.14159265359;
+
 struct CameraUniform {
     view_proj: mat4x4<f32>,
+    position: vec4<f32>,
 };
 
 struct DirectionalLight {
@@ -230,6 +254,11 @@ struct ShadowUniforms {
     _pad2: u32,
 };
 
+struct PbrMaterial {
+    albedo_metallic: vec4<f32>,
+    roughness_ao_pad: vec4<f32>,
+};
+
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
 
@@ -248,6 +277,9 @@ var shadow_map_texture: texture_depth_2d_array;
 @group(2) @binding(2)
 var shadow_sampler: sampler_comparison;
 
+@group(3) @binding(0)
+var<uniform> material: PbrMaterial;
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) color: vec4<f32>,
@@ -258,6 +290,63 @@ struct VertexOutput {
     @location(0) color: vec4<f32>,
     @location(1) world_position: vec3<f32>,
 };
+
+// --- PBR BRDF Functions ---
+
+fn distribution_ggx(n_dot_h: f32, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    let a2 = a * a;
+    let denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+    return a2 / (PI * denom * denom);
+}
+
+fn geometry_schlick_ggx(n_dot: f32, roughness: f32) -> f32 {
+    let r = roughness + 1.0;
+    let k = (r * r) / 8.0;
+    return n_dot / (n_dot * (1.0 - k) + k);
+}
+
+fn geometry_smith(n_dot_v: f32, n_dot_l: f32, roughness: f32) -> f32 {
+    return geometry_schlick_ggx(n_dot_v, roughness) * geometry_schlick_ggx(n_dot_l, roughness);
+}
+
+fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
+    return f0 + (1.0 - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+fn evaluate_brdf(
+    light_dir: vec3<f32>,
+    view_dir: vec3<f32>,
+    normal: vec3<f32>,
+    albedo: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+) -> vec3<f32> {
+    let half_vec = normalize(view_dir + light_dir);
+
+    let n_dot_l = max(dot(normal, light_dir), 0.0);
+    let n_dot_v = max(dot(normal, view_dir), 0.0);
+    let n_dot_h = max(dot(normal, half_vec), 0.0);
+    let h_dot_v = max(dot(half_vec, view_dir), 0.0);
+
+    let f0 = mix(vec3<f32>(0.04), albedo, metallic);
+
+    let d = distribution_ggx(n_dot_h, roughness);
+    let g = geometry_smith(n_dot_v, n_dot_l, roughness);
+    let f = fresnel_schlick(h_dot_v, f0);
+
+    let numerator = d * g * f;
+    let denominator = 4.0 * n_dot_v * n_dot_l + 0.0001;
+    let specular = numerator / denominator;
+
+    let k_s = f;
+    let k_d = (vec3<f32>(1.0) - k_s) * (1.0 - metallic);
+    let diffuse = k_d * albedo / PI;
+
+    return (diffuse + specular) * n_dot_l;
+}
+
+// --- Attenuation & Shadow ---
 
 fn point_light_attenuation(dist: f32, radius: f32) -> f32 {
     if dist >= radius {
@@ -270,38 +359,15 @@ fn point_light_attenuation(dist: f32, radius: f32) -> f32 {
     return inv_sq * window;
 }
 
-fn point_light_contribution(
-    frag_pos: vec3<f32>,
-    normal: vec3<f32>,
-) -> vec3<f32> {
-    var total = vec3<f32>(0.0);
-    let count = point_lights.count;
-    for (var i = 0u; i < count; i++) {
-        let light = point_lights.lights[i];
-        let to_light = light.position_radius.xyz - frag_pos;
-        let dist = length(to_light);
-        let radius = light.position_radius.w;
-        if dist >= radius { continue; }
-        let atten = point_light_attenuation(dist, radius);
-        let n_dot_l = max(dot(normal, normalize(to_light)), 0.0);
-        total += light.color_intensity.xyz * light.color_intensity.w * atten * n_dot_l;
-    }
-    return total;
-}
-
 fn shadow_for_cascade(world_pos: vec3<f32>, cascade_idx: i32) -> f32 {
     let light_pos = shadow_uniforms.light_matrices[cascade_idx] * vec4<f32>(world_pos, 1.0);
     let shadow_coord = light_pos.xyz / light_pos.w;
-    // Map from NDC [-1,1] to UV [0,1]. Y is flipped for texture coords.
     let uv = vec2<f32>(shadow_coord.x * 0.5 + 0.5, -shadow_coord.y * 0.5 + 0.5);
 
-    // Clamp: if outside [0,1] treat as fully lit.
     if uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 {
         return 1.0;
     }
 
-    // Sample with hardware PCF via comparison sampler.
-    // Reverse-Z: shadow_coord.z is depth, comparison is GreaterEqual.
     return textureSampleCompareLevel(
         shadow_map_texture,
         shadow_sampler,
@@ -314,7 +380,6 @@ fn shadow_for_cascade(world_pos: vec3<f32>, cascade_idx: i32) -> f32 {
 fn blended_shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
     if shadow_uniforms.cascade_count == 0u { return 1.0; }
 
-    // Select cascade based on view-space depth.
     var cascade_idx = i32(shadow_uniforms.cascade_count) - 1;
     for (var i = 0; i < i32(shadow_uniforms.cascade_count); i++) {
         if view_depth < shadow_uniforms.cascade_far[i] {
@@ -325,7 +390,6 @@ fn blended_shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
 
     let s1 = shadow_for_cascade(world_pos, cascade_idx);
 
-    // Blend at cascade boundary.
     let blend_start = shadow_uniforms.cascade_far[cascade_idx] * 0.95;
     if view_depth > blend_start && cascade_idx + 1 < i32(shadow_uniforms.cascade_count) {
         let s2 = shadow_for_cascade(world_pos, cascade_idx + 1);
@@ -335,6 +399,8 @@ fn blended_shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
 
     return s1;
 }
+
+// --- Vertex & Fragment ---
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
@@ -347,28 +413,41 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Compute normal from world position (sphere centered at origin).
     let normal = normalize(in.world_position);
-
-    // Approximate view depth as distance from origin (camera orbits around origin).
     let view_depth = length(in.world_position);
+    let view_dir = normalize(camera.position.xyz - in.world_position);
 
-    // Shadow factor from cascaded shadow maps.
+    // Material properties: vertex color modulates material albedo.
+    let albedo = in.color.rgb * material.albedo_metallic.xyz;
+    let metallic = material.albedo_metallic.w;
+    let roughness = material.roughness_ao_pad.x;
+    let ao = material.roughness_ao_pad.y;
+
+    // Shadow factor.
     let shadow = blended_shadow_factor(in.world_position, view_depth);
 
-    // N dot L: negate sun direction because it points FROM the light.
-    let n_dot_l = max(dot(normal, -sun.direction_intensity.xyz), 0.0);
+    // Directional light (sun) PBR contribution.
+    let sun_dir = -sun.direction_intensity.xyz;
+    var color = evaluate_brdf(sun_dir, view_dir, normal, albedo, metallic, roughness)
+              * sun.color_padding.xyz * sun.direction_intensity.w * shadow;
 
-    // Directional (sun) diffuse contribution, modulated by shadow.
-    let diffuse = sun.color_padding.xyz * sun.direction_intensity.w * n_dot_l * shadow;
+    // Point light PBR contributions.
+    let count = point_lights.count;
+    for (var i = 0u; i < count; i++) {
+        let light = point_lights.lights[i];
+        let to_light = light.position_radius.xyz - in.world_position;
+        let dist = length(to_light);
+        let radius = light.position_radius.w;
+        if dist >= radius { continue; }
+        let atten = point_light_attenuation(dist, radius);
+        color += evaluate_brdf(normalize(to_light), view_dir, normal, albedo, metallic, roughness)
+               * light.color_intensity.xyz * light.color_intensity.w * atten;
+    }
 
-    // Point light contribution (not shadowed for now).
-    let point = point_light_contribution(in.world_position, normal);
+    // Ambient term (simple; IBL comes later).
+    let ambient = vec3<f32>(0.03) * albedo * ao;
+    color += ambient;
 
-    // Small ambient term so shadowed areas aren't pure black.
-    let ambient = vec3<f32>(0.08, 0.08, 0.12);
-
-    let lit_color = in.color.rgb * (diffuse + point + ambient);
-    return vec4<f32>(lit_color, in.color.a);
+    return vec4<f32>(color, in.color.a);
 }
 "#;

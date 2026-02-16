@@ -113,6 +113,7 @@ impl Camera {
     pub fn to_uniform(&self) -> CameraUniform {
         CameraUniform {
             view_proj: self.view_projection_matrix().to_cols_array_2d(),
+            camera_pos: [self.position.x, self.position.y, self.position.z, 0.0],
         }
     }
 }

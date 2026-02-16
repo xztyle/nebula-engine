@@ -32,7 +32,7 @@ impl TexturedPipeline {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(64),
+                        min_binding_size: NonZeroU64::new(80), // CameraUniform: mat4x4 + vec4
                     },
                     count: None,
                 }],

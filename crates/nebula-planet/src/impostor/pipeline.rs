@@ -276,6 +276,7 @@ impl ImpostorRenderer {
         // Update camera uniform
         let camera_uniform = nebula_render::CameraUniform {
             view_proj: view_proj.to_cols_array_2d(),
+            camera_pos: [0.0, 0.0, 0.0, 0.0],
         };
         queue.write_buffer(
             &self.camera_buffer,

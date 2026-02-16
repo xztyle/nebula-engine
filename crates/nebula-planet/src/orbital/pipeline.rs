@@ -357,6 +357,7 @@ impl OrbitalRenderer {
 
         let camera_uniform = CameraUniform {
             view_proj: view_proj.to_cols_array_2d(),
+            camera_pos: [0.0, 0.0, 0.0, 0.0],
         };
         queue.write_buffer(
             &self.camera_buffer,
