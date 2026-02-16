@@ -610,6 +610,54 @@ fn demonstrate_chunk_loading() -> usize {
     loaded_at_origin
 }
 
+/// Demonstrates Copy-on-Write chunk sharing and mutation isolation.
+fn demonstrate_cow_chunks() {
+    use nebula_voxel::CowChunk;
+
+    info!("Starting Copy-on-Write chunk demonstration");
+
+    // Create two air chunks — they share the same Arc allocation.
+    let a = CowChunk::new_air();
+    let b = CowChunk::new_air();
+    assert!(a.ptr_eq(&b), "air chunks must share storage");
+    info!(
+        "Two air chunks share storage: ptr_eq={}, ref_count={}",
+        a.ptr_eq(&b),
+        a.ref_count()
+    );
+
+    // Clone shared — still the same allocation.
+    let mut c = a.clone_shared();
+    info!(
+        "After clone_shared: ref_count={}, is_shared={}",
+        a.ref_count(),
+        c.is_shared()
+    );
+
+    // Mutate c — triggers CoW clone; a and b remain unchanged.
+    c.get_mut().set(0, 0, 0, VoxelTypeId(42));
+    let original_crc = a.get().get(0, 0, 0);
+    let clone_crc = c.get().get(0, 0, 0);
+    info!(
+        "Original CRC: 0x{:04X}, Clone CRC: 0x{:04X}",
+        original_crc.0, clone_crc.0
+    );
+    assert_eq!(original_crc, VoxelTypeId(0), "original must be unchanged");
+    assert_eq!(clone_crc, VoxelTypeId(42), "clone must have new value");
+    assert!(!a.ptr_eq(&c), "after mutation they must not share");
+
+    // Demonstrate memory savings: 1000 air chunks share one allocation.
+    let chunks: Vec<CowChunk> = (0..1000).map(|_| CowChunk::new_air()).collect();
+    let all_shared = chunks.windows(2).all(|w| w[0].ptr_eq(&w[1]));
+    info!(
+        "1000 air chunks all share storage: {}, ref_count={}",
+        all_shared,
+        chunks[0].ref_count()
+    );
+
+    info!("Copy-on-Write chunk demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -675,6 +723,9 @@ fn main() {
 
     // Demonstrate chunk loading/unloading
     let loaded_count = demonstrate_chunk_loading();
+
+    // Demonstrate Copy-on-Write chunks
+    demonstrate_cow_chunks();
 
     // Log initial state
     let mut demo_state = DemoState::new();

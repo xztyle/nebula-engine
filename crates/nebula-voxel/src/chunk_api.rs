@@ -5,6 +5,7 @@
 //! handled gracefully without panics.
 
 use crate::chunk::{CHUNK_SIZE, ChunkData};
+use crate::cow_chunk::CowChunk;
 use crate::registry::VoxelTypeId;
 
 /// Dirty-flag bit: chunk mesh needs rebuilding.
@@ -23,8 +24,8 @@ const ALL_DIRTY: u8 = MESH_DIRTY | SAVE_DIRTY | NETWORK_DIRTY;
 /// and out-of-bounds writes are silently ignored (with a warning log).
 #[derive(Clone, Debug)]
 pub struct Chunk {
-    /// The underlying palette-compressed storage.
-    data: ChunkData,
+    /// Copy-on-Write wrapper around palette-compressed storage.
+    data: CowChunk,
     /// Bitfield of dirty flags.
     dirty: u8,
     /// Monotonically increasing version counter, incremented on each mutation.
@@ -33,9 +34,11 @@ pub struct Chunk {
 
 impl Chunk {
     /// Creates a new chunk filled with Air (`VoxelTypeId(0)`).
+    ///
+    /// Uses `CowChunk::new_air()` so all default chunks share storage.
     pub fn new() -> Self {
         Self {
-            data: ChunkData::new_air(),
+            data: CowChunk::new_air(),
             dirty: 0,
             version: 0,
         }
@@ -44,7 +47,7 @@ impl Chunk {
     /// Creates a new chunk filled with the given voxel type.
     pub fn new_filled(voxel: VoxelTypeId) -> Self {
         Self {
-            data: ChunkData::new(voxel),
+            data: CowChunk::new(ChunkData::new(voxel)),
             dirty: 0,
             version: 0,
         }
@@ -58,7 +61,7 @@ impl Chunk {
             tracing::warn!("Chunk::get out of bounds: ({}, {}, {})", x, y, z);
             return VoxelTypeId(0);
         }
-        self.data.get(x as usize, y as usize, z as usize)
+        self.data.get().get(x as usize, y as usize, z as usize)
     }
 
     /// Sets the voxel type at `(x, y, z)`.
@@ -69,7 +72,9 @@ impl Chunk {
             tracing::warn!("Chunk::set out of bounds: ({}, {}, {})", x, y, z);
             return;
         }
-        self.data.set(x as usize, y as usize, z as usize, voxel);
+        self.data
+            .get_mut()
+            .set(x as usize, y as usize, z as usize, voxel);
         self.dirty |= ALL_DIRTY;
         self.version += 1;
     }
@@ -78,7 +83,7 @@ impl Chunk {
     ///
     /// Optimized to reset palette and storage in O(1).
     pub fn fill(&mut self, voxel: VoxelTypeId) {
-        self.data.fill(voxel);
+        self.data.get_mut().fill(voxel);
         self.dirty |= ALL_DIRTY;
         self.version += 1;
     }
@@ -110,19 +115,25 @@ impl Chunk {
 
     /// Returns a reference to the underlying [`ChunkData`].
     pub fn data(&self) -> &ChunkData {
-        &self.data
+        self.data.get()
     }
 
     /// Returns a mutable reference to the underlying [`ChunkData`].
     ///
+    /// Triggers a Copy-on-Write clone if the data is shared.
     /// Callers must manage dirty flags and version manually when using this.
     pub fn data_mut(&mut self) -> &mut ChunkData {
-        &mut self.data
+        self.data.get_mut()
+    }
+
+    /// Returns a reference to the underlying [`CowChunk`].
+    pub fn cow_data(&self) -> &CowChunk {
+        &self.data
     }
 
     /// Returns the palette length of the underlying storage.
     pub fn palette_len(&self) -> usize {
-        self.data.palette_len()
+        self.data.get().palette_len()
     }
 
     /// Checks whether `(x, y, z)` are all within `[0, 32)`.
