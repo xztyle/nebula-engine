@@ -8,8 +8,8 @@ use clap::Parser;
 use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
 use nebula_cubesphere::{
-    CubeFace, FaceCoord, direction_to_face, face_coord_to_sphere_everitt,
-    sphere_to_face_coord_everitt,
+    ChunkAddress, CubeFace, FaceCoord, FaceDirection, FaceQuadtree, LodNeighbor, SameFaceNeighbor,
+    direction_to_face, face_coord_to_sphere_everitt, sphere_to_face_coord_everitt,
 };
 use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
 use rand::{Rng, SeedableRng};
@@ -372,6 +372,64 @@ fn demonstrate_sphere_to_cube_inverse() {
     info!("Sphere-to-cube inverse demonstration completed successfully");
 }
 
+/// Demonstrates same-face neighbor finding on the cubesphere.
+fn demonstrate_neighbor_finding() {
+    info!("Starting same-face neighbor finding demonstration");
+
+    // Same-LOD neighbor finding: a center chunk should have 4 neighbors
+    let center = ChunkAddress::new(CubeFace::PosX, 10, 50, 50);
+    let mut same_face_count = 0;
+    for dir in FaceDirection::ALL {
+        if let SameFaceNeighbor::Same(n) = center.same_face_neighbor(dir) {
+            same_face_count += 1;
+            info!("  {:?} neighbor of {}: {} (lod={})", dir, center, n, n.lod);
+        }
+    }
+    info!(
+        "Center chunk at {} has {} same-face neighbors",
+        center, same_face_count
+    );
+
+    // Edge chunk: should have 3 same-face neighbors
+    let edge = ChunkAddress::new(CubeFace::PosX, 10, 0, 50);
+    let mut edge_count = 0;
+    for dir in FaceDirection::ALL {
+        if matches!(edge.same_face_neighbor(dir), SameFaceNeighbor::Same(_)) {
+            edge_count += 1;
+        }
+    }
+    info!(
+        "Edge chunk at {} has {} same-face neighbors",
+        edge, edge_count
+    );
+
+    // LOD-aware neighbor finding with a quadtree
+    let mut tree = FaceQuadtree::new(CubeFace::PosX);
+    tree.root.subdivide();
+
+    // Subdivide bottom-right child to create LOD mismatch
+    if let nebula_cubesphere::QuadNode::Branch { children, .. } = &mut tree.root {
+        children[1].subdivide();
+    }
+
+    let leaves = tree.root.all_leaves();
+    let coarse_leaf = leaves
+        .iter()
+        .find(|a| a.lod == ChunkAddress::MAX_LOD - 1 && a.x == 0 && a.y == 0)
+        .unwrap();
+
+    let result = tree.find_neighbor(coarse_leaf, FaceDirection::East);
+    match &result {
+        LodNeighbor::Single(n) => info!("LOD-aware: single neighbor at {n}"),
+        LodNeighbor::Multiple(ns) => {
+            info!("LOD-aware: {} finer neighbors along shared edge", ns.len());
+        }
+        LodNeighbor::OffFace => info!("LOD-aware: neighbor is off-face"),
+    }
+
+    info!("Same-face neighbor finding demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -407,6 +465,9 @@ fn main() {
 
     // Demonstrate sphere-to-cube inverse projection
     demonstrate_sphere_to_cube_inverse();
+
+    // Demonstrate same-face neighbor finding
+    demonstrate_neighbor_finding();
 
     // Log initial state
     let mut demo_state = DemoState::new();
