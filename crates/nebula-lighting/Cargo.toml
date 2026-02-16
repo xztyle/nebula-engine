@@ -7,4 +7,5 @@ license.workspace = true
 [dependencies]
 bytemuck = { workspace = true }
 glam = { workspace = true }
+nebula-voxel = { path = "../nebula-voxel" }
 wgpu = { workspace = true }
