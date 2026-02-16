@@ -293,6 +293,30 @@ pub fn remove_block_light(
     }
 }
 
+/// Scans a chunk for emissive voxels and returns their positions and light levels.
+///
+/// Each entry is `(x, y, z, light_emission)` suitable for passing to
+/// [`propagate_block_light`].
+pub fn collect_emissive_sources(
+    voxels: &ChunkData,
+    registry: &VoxelTypeRegistry,
+) -> Vec<(u32, u32, u32, u8)> {
+    let mut sources = Vec::new();
+    let s = CHUNK_SIZE as u32;
+    for y in 0..s {
+        for z in 0..s {
+            for x in 0..s {
+                let id = voxels.get(x as usize, y as usize, z as usize);
+                let def = registry.get(id);
+                if def.light_emission > 0 {
+                    sources.push((x, y, z, def.light_emission));
+                }
+            }
+        }
+    }
+    sources
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -418,6 +442,27 @@ mod tests {
         // After removal the source and neighbours should be dark.
         assert_eq!(light.get(16, 16, 16).block_light(), 0);
         assert_eq!(light.get(17, 16, 16).block_light(), 0);
+    }
+
+    #[test]
+    fn test_collect_emissive_sources() {
+        let mut reg = VoxelTypeRegistry::new();
+        reg.register(VoxelTypeDef {
+            name: "glowstone".to_string(),
+            solid: true,
+            transparency: Transparency::Opaque,
+            material_index: 1,
+            light_emission: 14,
+        })
+        .unwrap();
+
+        let glow_id = reg.lookup_by_name("glowstone").unwrap();
+        let mut voxels = ChunkData::new_air();
+        voxels.set(16, 16, 16, glow_id);
+
+        let sources = collect_emissive_sources(&voxels, &reg);
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0], (16, 16, 16, 14));
     }
 
     #[test]

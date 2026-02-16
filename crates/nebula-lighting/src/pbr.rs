@@ -17,6 +17,10 @@ pub struct PbrMaterial {
     pub roughness: f32,
     /// Ambient occlusion \[0.0, 1.0\]. 1 = fully exposed, 0 = fully occluded.
     pub ao: f32,
+    /// Emissive color in linear RGB. Zero for non-emissive materials.
+    pub emissive_color: glam::Vec3,
+    /// Emissive intensity multiplier. Values > 1.0 produce HDR output for bloom.
+    pub emissive_intensity: f32,
 }
 
 impl Default for PbrMaterial {
@@ -26,6 +30,8 @@ impl Default for PbrMaterial {
             metallic: 0.0,
             roughness: 0.5,
             ao: 1.0,
+            emissive_color: glam::Vec3::ZERO,
+            emissive_intensity: 0.0,
         }
     }
 }
@@ -38,6 +44,8 @@ impl PbrMaterial {
             metallic: 0.0,
             roughness: 0.9,
             ao: 1.0,
+            emissive_color: glam::Vec3::ZERO,
+            emissive_intensity: 0.0,
         }
     }
 
@@ -48,19 +56,57 @@ impl PbrMaterial {
             metallic: 0.8,
             roughness: 0.4,
             ao: 1.0,
+            emissive_color: glam::Vec3::ZERO,
+            emissive_intensity: 0.0,
         }
+    }
+
+    /// Lava material: orange-red, rough, non-metallic, strongly emissive.
+    pub fn lava() -> Self {
+        Self {
+            albedo: glam::Vec3::new(0.8, 0.2, 0.0),
+            metallic: 0.0,
+            roughness: 0.9,
+            ao: 1.0,
+            emissive_color: glam::Vec3::new(1.0, 0.3, 0.0),
+            emissive_intensity: 5.0,
+        }
+    }
+
+    /// Glowstone material: warm white glow, moderate emissive intensity.
+    pub fn glowstone() -> Self {
+        Self {
+            albedo: glam::Vec3::new(0.9, 0.8, 0.5),
+            metallic: 0.0,
+            roughness: 0.7,
+            ao: 1.0,
+            emissive_color: glam::Vec3::new(1.0, 0.9, 0.6),
+            emissive_intensity: 3.0,
+        }
+    }
+
+    /// Returns `true` if this material emits light.
+    pub fn is_emissive(&self) -> bool {
+        self.emissive_intensity > 0.0 && self.emissive_color.length_squared() > 0.0
+    }
+
+    /// Total emissive contribution = color × intensity.
+    pub fn emissive_output(&self) -> glam::Vec3 {
+        self.emissive_color * self.emissive_intensity
     }
 
     /// Build the GPU-side uniform from this material's properties.
     pub fn to_uniform(&self) -> PbrMaterialUniform {
+        let emissive = self.emissive_output();
         PbrMaterialUniform {
             albedo_metallic: [self.albedo.x, self.albedo.y, self.albedo.z, self.metallic],
             roughness_ao_pad: [self.roughness, self.ao, 0.0, 0.0],
+            emissive: [emissive.x, emissive.y, emissive.z, 0.0],
         }
     }
 }
 
-/// GPU-side PBR material uniform, 32 bytes, std140-compatible.
+/// GPU-side PBR material uniform, 48 bytes, std140-compatible.
 ///
 /// Bound at `@group(3) @binding(0)` visible to `ShaderStages::FRAGMENT`.
 #[repr(C)]
@@ -70,6 +116,8 @@ pub struct PbrMaterialUniform {
     pub albedo_metallic: [f32; 4],
     /// x = roughness, y = ao, zw = padding.
     pub roughness_ao_pad: [f32; 4],
+    /// xyz = emissive color × intensity (pre-multiplied), w = padding.
+    pub emissive: [f32; 4],
 }
 
 // ---------------------------------------------------------------------------
@@ -136,7 +184,7 @@ mod tests {
 
     #[test]
     fn test_pbr_material_uniform_size() {
-        assert_eq!(std::mem::size_of::<PbrMaterialUniform>(), 32);
+        assert_eq!(std::mem::size_of::<PbrMaterialUniform>(), 48);
     }
 
     #[test]
@@ -154,6 +202,8 @@ mod tests {
             metallic: 0.8,
             roughness: 0.3,
             ao: 0.9,
+            emissive_color: glam::Vec3::ZERO,
+            emissive_intensity: 0.0,
         };
         let u = mat.to_uniform();
         assert!((u.albedo_metallic[0] - 1.0).abs() < 1e-6);
@@ -274,6 +324,55 @@ mod tests {
             "B channel ({}) exceeds incoming",
             result.z
         );
+    }
+
+    #[test]
+    fn test_emissive_material_outputs_hdr_values() {
+        let mat = PbrMaterial::lava();
+        let output = mat.emissive_output();
+        assert!(
+            output.x > 1.0,
+            "emissive R ({}) should exceed 1.0 for HDR",
+            output.x
+        );
+        assert!(
+            output.y > 1.0,
+            "emissive G ({}) should exceed 1.0 for HDR",
+            output.y
+        );
+        assert!((output.x - 5.0).abs() < 1e-6);
+        assert!((output.y - 1.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_non_emissive_material_has_zero_emissive() {
+        let mat = PbrMaterial::stone();
+        let output = mat.emissive_output();
+        assert_eq!(output, glam::Vec3::ZERO);
+        assert!(!mat.is_emissive());
+    }
+
+    #[test]
+    fn test_emissive_color_matches_gpu_uniform() {
+        let mat = PbrMaterial::lava();
+        let gpu = mat.to_uniform();
+        let expected = mat.emissive_output();
+        assert!((gpu.emissive[0] - expected.x).abs() < 1e-6);
+        assert!((gpu.emissive[1] - expected.y).abs() < 1e-6);
+        assert!((gpu.emissive[2] - expected.z).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_bloom_responds_to_emissive_surfaces() {
+        let mat = PbrMaterial::lava();
+        let output = mat.emissive_output();
+        let bloom_threshold = 1.0;
+        let max_channel = output.x.max(output.y).max(output.z);
+        assert!(max_channel > bloom_threshold);
+
+        let stone_output = PbrMaterial::stone().emissive_output();
+        let stone_max = stone_output.x.max(stone_output.y).max(stone_output.z);
+        assert!(stone_max <= bloom_threshold);
     }
 
     #[test]

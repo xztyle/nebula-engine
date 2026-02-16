@@ -121,7 +121,7 @@ impl LitPipeline {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(32), // PbrMaterialUniform
+                        min_binding_size: NonZeroU64::new(48), // PbrMaterialUniform (with emissive)
                     },
                     count: None,
                 }],
@@ -257,6 +257,7 @@ struct ShadowUniforms {
 struct PbrMaterial {
     albedo_metallic: vec4<f32>,
     roughness_ao_pad: vec4<f32>,
+    emissive: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -447,6 +448,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Ambient term (simple; IBL comes later).
     let ambient = vec3<f32>(0.03) * albedo * ao;
     color += ambient;
+
+    // Add emissive output (self-illumination, can produce HDR values > 1.0 for bloom).
+    color += material.emissive.xyz;
 
     return vec4<f32>(color, in.color.a);
 }

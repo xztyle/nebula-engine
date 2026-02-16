@@ -17,5 +17,6 @@ pub use shadow::{
     compute_cascade_matrix_from_camera,
 };
 pub use voxel_light::{
-    ChunkLightMap, VoxelLight, propagate_block_light, propagate_sunlight, remove_block_light,
+    ChunkLightMap, VoxelLight, collect_emissive_sources, propagate_block_light, propagate_sunlight,
+    remove_block_light,
 };
