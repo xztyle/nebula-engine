@@ -83,6 +83,83 @@ impl Vec3I96 {
     }
 }
 
+// Sector Coordinate Types (Plan 03_coords/02)
+
+/// The index of a sector in the universe grid.
+/// Each component is the upper 96 bits of the corresponding i128 axis.
+/// Stored as three i128 values with the lower 32 bits always zero
+/// (or equivalently, as a custom i96 triple).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SectorIndex {
+    pub x: i128,
+    pub y: i128,
+    pub z: i128,
+}
+
+/// The local offset within a sector, in millimeters.
+/// Range: [0, 2^32 - 1] for each axis when the full i128 coordinate is non-negative.
+/// For negative coordinates, the offset is adjusted so it is always non-negative.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SectorOffset {
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+}
+
+/// A position decomposed into sector index + local offset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SectorCoord {
+    pub sector: SectorIndex,
+    pub offset: SectorOffset,
+}
+
+/// Lightweight key type for sector-based hash maps.
+/// The hash combines all three axis indices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SectorKey(pub SectorIndex);
+
+impl From<&SectorCoord> for SectorKey {
+    fn from(coord: &SectorCoord) -> Self {
+        SectorKey(coord.sector)
+    }
+}
+
+// Sector coordinate constants and implementation
+const SECTOR_BITS: u32 = 32;
+const SECTOR_MASK: i128 = 0xFFFF_FFFF;
+
+impl SectorCoord {
+    /// Decompose an absolute world position into sector index + local offset.
+    pub fn from_world(pos: &WorldPosition) -> Self {
+        SectorCoord {
+            sector: SectorIndex {
+                // Arithmetic right shift: for -1 >> 32 this gives -1,
+                // meaning the sector at index -1 (one sector in the negative direction).
+                x: pos.x >> SECTOR_BITS,
+                y: pos.y >> SECTOR_BITS,
+                z: pos.z >> SECTOR_BITS,
+            },
+            offset: SectorOffset {
+                // Mask off the lower 32 bits. For negative coordinates,
+                // this produces a positive offset within the sector.
+                // E.g., i128 value -1: sector = -1, offset = 0xFFFFFFFF = 4294967295.
+                x: (pos.x & SECTOR_MASK) as i32,
+                y: (pos.y & SECTOR_MASK) as i32,
+                z: (pos.z & SECTOR_MASK) as i32,
+            },
+        }
+    }
+
+    /// Reconstruct the absolute world position from sector + offset.
+    pub fn to_world(&self) -> WorldPosition {
+        WorldPosition {
+            x: (self.sector.x << SECTOR_BITS) | (self.offset.x as i128 & SECTOR_MASK),
+            y: (self.sector.y << SECTOR_BITS) | (self.offset.y as i128 & SECTOR_MASK),
+            z: (self.sector.z << SECTOR_BITS) | (self.offset.z as i128 & SECTOR_MASK),
+        }
+    }
+}
+
 // Space marker types (zero-sized)
 /// Marker type for universe-space coordinates  
 pub struct UniverseSpace;
@@ -190,14 +267,7 @@ impl InSpace<ChunkSpace> for Pos<ChunkSpace, UVec3> {
     }
 }
 
-/// Two-part coordinate for sector space: sector index + local offset
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct SectorCoord {
-    /// Which 2^32 mm (~4,295 km) cube this position falls in
-    pub sector_index: Vec3I96,
-    /// Position within that cube in millimeters
-    pub local_offset: Vec3I32,
-}
+// Note: SectorCoord is now defined above with the new sector coordinate types
 
 impl InSpace<SectorSpace> for Pos<SectorSpace, SectorCoord> {
     type Storage = SectorCoord;
@@ -221,26 +291,20 @@ const MM_TO_METERS: f32 = 0.001;
 pub fn universe_to_sector(
     pos: &Pos<UniverseSpace, nebula_math::Vec3I128>,
 ) -> Pos<SectorSpace, SectorCoord> {
-    let sector_index = Vec3I96::new(
-        (pos.value.x >> 32) as i64,
-        (pos.value.y >> 32) as i64,
-        (pos.value.z >> 32) as i64,
-    );
-    let local_offset = Vec3I32::new(pos.value.x as i32, pos.value.y as i32, pos.value.z as i32);
-    Pos::new(SectorCoord {
-        sector_index,
-        local_offset,
-    })
+    let world_pos = WorldPosition::new(pos.value.x, pos.value.y, pos.value.z);
+    Pos::new(SectorCoord::from_world(&world_pos))
 }
 
 /// Convert a sector-space position back to universe-space.
 pub fn sector_to_universe(
     pos: &Pos<SectorSpace, SectorCoord>,
 ) -> Pos<UniverseSpace, nebula_math::Vec3I128> {
-    let x = (pos.value.sector_index.x as i128) << 32 | (pos.value.local_offset.x as u32 as i128);
-    let y = (pos.value.sector_index.y as i128) << 32 | (pos.value.local_offset.y as u32 as i128);
-    let z = (pos.value.sector_index.z as i128) << 32 | (pos.value.local_offset.z as u32 as i128);
-    Pos::new(nebula_math::Vec3I128::new(x, y, z))
+    let world_pos = pos.value.to_world();
+    Pos::new(nebula_math::Vec3I128::new(
+        world_pos.x,
+        world_pos.y,
+        world_pos.z,
+    ))
 }
 
 /// Convert a universe-space position to planet-space.
@@ -472,20 +536,24 @@ mod tests {
 
     #[test]
     fn test_sector_coord_components() {
-        let sector_index = Vec3I96::new(1, -2, 3);
-        let local_offset = Vec3I32::new(1000, 2000, 3000);
-
-        let sector_coord = SectorCoord {
-            sector_index,
-            local_offset,
+        let sector_index = SectorIndex { x: 1, y: -2, z: 3 };
+        let local_offset = SectorOffset {
+            x: 1000,
+            y: 2000,
+            z: 3000,
         };
 
-        assert_eq!(sector_coord.sector_index.x, 1);
-        assert_eq!(sector_coord.sector_index.y, -2);
-        assert_eq!(sector_coord.sector_index.z, 3);
-        assert_eq!(sector_coord.local_offset.x, 1000);
-        assert_eq!(sector_coord.local_offset.y, 2000);
-        assert_eq!(sector_coord.local_offset.z, 3000);
+        let sector_coord = SectorCoord {
+            sector: sector_index,
+            offset: local_offset,
+        };
+
+        assert_eq!(sector_coord.sector.x, 1);
+        assert_eq!(sector_coord.sector.y, -2);
+        assert_eq!(sector_coord.sector.z, 3);
+        assert_eq!(sector_coord.offset.x, 1000);
+        assert_eq!(sector_coord.offset.y, 2000);
+        assert_eq!(sector_coord.offset.z, 3000);
     }
 
     #[test]
@@ -515,5 +583,166 @@ mod tests {
         let roundtrip = chunk_to_planet(&chunk_pos, &chunk_origin);
 
         assert_eq!(original.value, roundtrip.value);
+    }
+
+    // Sector Coordinate Tests (Plan 03_coords/02)
+
+    #[test]
+    fn test_origin_maps_to_sector_zero() {
+        let world_pos = WorldPosition::new(0, 0, 0);
+        let sector_coord = SectorCoord::from_world(&world_pos);
+
+        assert_eq!(sector_coord.sector.x, 0);
+        assert_eq!(sector_coord.sector.y, 0);
+        assert_eq!(sector_coord.sector.z, 0);
+        assert_eq!(sector_coord.offset.x, 0);
+        assert_eq!(sector_coord.offset.y, 0);
+        assert_eq!(sector_coord.offset.z, 0);
+    }
+
+    #[test]
+    fn test_position_at_sector_boundary() {
+        // Test exactly at the start of sector 1
+        let world_pos = WorldPosition::new(1_i128 << 32, 0, 0);
+        let sector_coord = SectorCoord::from_world(&world_pos);
+
+        assert_eq!(sector_coord.sector.x, 1);
+        assert_eq!(sector_coord.offset.x, 0);
+
+        // Test last position in sector 0
+        let world_pos = WorldPosition::new((1_i128 << 32) - 1, 0, 0);
+        let sector_coord = SectorCoord::from_world(&world_pos);
+
+        assert_eq!(sector_coord.sector.x, 0);
+        assert_eq!(sector_coord.offset.x, 4294967295_u32 as i32);
+    }
+
+    #[test]
+    fn test_roundtrip_world_to_sector_to_world() {
+        let test_positions = [
+            WorldPosition::new(0, 0, 0),
+            WorldPosition::new(1_000_000, -5_000_000_000, 42),
+            WorldPosition::new(i128::MAX, i128::MIN, 0),
+            WorldPosition::new(12345678901234, -98765432109876, 555444333222),
+            WorldPosition::new(-1000, 2000, -3000),
+        ];
+
+        for pos in test_positions {
+            let sector_coord = SectorCoord::from_world(&pos);
+            let reconstructed = sector_coord.to_world();
+            assert_eq!(
+                pos, reconstructed,
+                "Roundtrip failed for position: {:?}",
+                pos
+            );
+        }
+    }
+
+    #[test]
+    fn test_negative_coordinates() {
+        let world_pos = WorldPosition::new(-1, -4294967296, -4294967297);
+        let sector_coord = SectorCoord::from_world(&world_pos);
+
+        // x = -1: sector = -1, offset = 4294967295
+        assert_eq!(sector_coord.sector.x, -1);
+        assert_eq!(sector_coord.offset.x, 4294967295_u32 as i32);
+
+        // y = -4294967296 = -(1 << 32): sector = -1, offset = 0
+        assert_eq!(sector_coord.sector.y, -1);
+        assert_eq!(sector_coord.offset.y, 0);
+
+        // z = -4294967297 = -(1 << 32) - 1: sector = -2, offset = 4294967295
+        assert_eq!(sector_coord.sector.z, -2);
+        assert_eq!(sector_coord.offset.z, 4294967295_u32 as i32);
+    }
+
+    #[test]
+    fn test_sector_index_for_large_coordinates() {
+        let world_pos = WorldPosition::new(100_i128 << 32, -(50_i128 << 32), 1_i128 << 96);
+        let sector_coord = SectorCoord::from_world(&world_pos);
+
+        assert_eq!(sector_coord.sector.x, 100);
+        assert_eq!(sector_coord.sector.y, -50);
+        assert_eq!(sector_coord.sector.z, 1_i128 << 64);
+        assert_eq!(sector_coord.offset.x, 0);
+        assert_eq!(sector_coord.offset.y, 0);
+        assert_eq!(sector_coord.offset.z, 0);
+    }
+
+    #[test]
+    fn test_sector_key_hash_equality() {
+        let sector_coord1 = SectorCoord {
+            sector: SectorIndex { x: 1, y: 2, z: 3 },
+            offset: SectorOffset {
+                x: 100,
+                y: 200,
+                z: 300,
+            },
+        };
+        let sector_coord2 = SectorCoord {
+            sector: SectorIndex { x: 1, y: 2, z: 3 },
+            offset: SectorOffset {
+                x: 400,
+                y: 500,
+                z: 600,
+            }, // Different offset
+        };
+        let sector_coord3 = SectorCoord {
+            sector: SectorIndex { x: 4, y: 5, z: 6 }, // Different sector
+            offset: SectorOffset {
+                x: 100,
+                y: 200,
+                z: 300,
+            },
+        };
+
+        let key1 = SectorKey::from(&sector_coord1);
+        let key2 = SectorKey::from(&sector_coord2);
+        let key3 = SectorKey::from(&sector_coord3);
+
+        // Same sector index should produce same key
+        assert_eq!(key1, key2);
+
+        // Different sector index should produce different key
+        assert_ne!(key1, key3);
+
+        // Hash equality
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher1 = DefaultHasher::new();
+        key1.hash(&mut hasher1);
+        let hash1 = hasher1.finish();
+
+        let mut hasher2 = DefaultHasher::new();
+        key2.hash(&mut hasher2);
+        let hash2 = hasher2.finish();
+
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_sector_key_usable_as_hashmap_key() {
+        use std::collections::HashMap;
+        let mut map: HashMap<SectorKey, String> = HashMap::new();
+
+        let key1 = SectorKey(SectorIndex { x: 1, y: 2, z: 3 });
+        let key2 = SectorKey(SectorIndex { x: 4, y: 5, z: 6 });
+        let key3 = SectorKey(SectorIndex { x: 7, y: 8, z: 9 });
+
+        map.insert(key1, "sector one".to_string());
+        map.insert(key2, "sector two".to_string());
+        map.insert(key3, "sector three".to_string());
+
+        assert_eq!(map.get(&key1), Some(&"sector one".to_string()));
+        assert_eq!(map.get(&key2), Some(&"sector two".to_string()));
+        assert_eq!(map.get(&key3), Some(&"sector three".to_string()));
+
+        let key_not_in_map = SectorKey(SectorIndex {
+            x: 99,
+            y: 99,
+            z: 99,
+        });
+        assert_eq!(map.get(&key_not_in_map), None);
     }
 }

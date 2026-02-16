@@ -44,6 +44,8 @@ pub fn default_window_attributes() -> WindowAttributes {
 pub type UpdateFn = Box<dyn FnMut(f64, f64)>;
 /// Callback invoked to compute the clear color for rendering.
 pub type ClearColorFn = Box<dyn FnMut(u64) -> wgpu::Color>;
+/// Custom update function that gets called each simulation tick.
+pub type CustomUpdateFn = Box<dyn FnMut(f64)>;
 
 /// Application state that manages the window, GPU context, and tracks surface dimensions.
 pub struct AppState {
@@ -61,6 +63,8 @@ pub struct AppState {
     pub tick_count: u64,
     /// Optional callback to compute clear color from tick count.
     pub clear_color_fn: Option<ClearColorFn>,
+    /// Optional custom update function called each simulation tick.
+    pub custom_update: Option<CustomUpdateFn>,
     /// Engine configuration.
     pub config: Config,
     /// Debug server (only in debug builds).
@@ -88,6 +92,7 @@ impl AppState {
             game_loop: GameLoop::new(),
             tick_count: 0,
             clear_color_fn: None,
+            custom_update: None,
             config: Config::default(),
             debug_server,
             debug_state,
@@ -117,6 +122,7 @@ impl AppState {
             game_loop: GameLoop::new(),
             tick_count: 0,
             clear_color_fn: None,
+            custom_update: None,
             config,
             debug_server,
             debug_state,
@@ -245,9 +251,15 @@ impl ApplicationHandler for AppState {
                 }
 
                 let tick_count = &mut self.tick_count;
+                let custom_update = &mut self.custom_update;
                 self.game_loop.tick(
-                    |_dt, _sim_time| {
+                    |dt, _sim_time| {
                         *tick_count += 1;
+
+                        // Call custom update function if provided
+                        if let Some(update_fn) = custom_update {
+                            update_fn(dt);
+                        }
                     },
                     |_alpha| {},
                 );
@@ -345,6 +357,26 @@ pub fn run() {
 pub fn run_with_config(config: Config) {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut app = AppState::with_config(config);
+    event_loop.run_app(&mut app).expect("Event loop failed");
+}
+
+/// Creates an event loop and runs the application with the given config and custom state.
+///
+/// This function blocks until the window is closed. The custom state will be updated
+/// each simulation tick.
+#[instrument(skip_all)]
+pub fn run_with_config_and_update<T>(config: Config, mut custom_state: T)
+where
+    T: FnMut(f64) + 'static,
+{
+    let event_loop = EventLoop::new().expect("Failed to create event loop");
+    let mut app = AppState::with_config(config);
+
+    // Store the custom update function in a Box for the app state
+    app.custom_update = Some(Box::new(move |dt: f64| {
+        custom_state(dt);
+    }));
+
     event_loop.run_app(&mut app).expect("Event loop failed");
 }
 

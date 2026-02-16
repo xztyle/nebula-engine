@@ -10,4 +10,5 @@ dirs = { workspace = true }
 tracing = "0.1"
 nebula-app = { path = "../nebula-app" }
 nebula-config = { path = "../nebula-config" }
+nebula-coords = { path = "../nebula-coords" }
 nebula-log = { path = "../nebula-log" }
