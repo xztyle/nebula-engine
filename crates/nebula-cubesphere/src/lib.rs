@@ -5,6 +5,7 @@ mod cube_face;
 mod face_coord;
 mod inverse;
 mod projection;
+mod quadtree;
 
 pub use chunk_address::ChunkAddress;
 pub use cube_face::CubeFace;
@@ -14,3 +15,4 @@ pub use projection::{
     ProjectionMethod, cube_to_sphere_everitt, face_coord_to_cube_point, face_coord_to_sphere,
     face_coord_to_sphere_everitt, project,
 };
+pub use quadtree::{FaceQuadtree, QuadNode};
