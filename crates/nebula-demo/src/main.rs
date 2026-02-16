@@ -2606,6 +2606,47 @@ fn demonstrate_physics_island() {
     info!("Physics island demonstration completed successfully");
 }
 
+/// Demonstrates the i128-to-f32 physics bridge: precision-preserving coordinate
+/// conversion between WorldPosition (i128 mm) and Rapier local space (f32 meters).
+fn demonstrate_physics_bridge() {
+    use nebula_physics::{local_to_world, world_to_local};
+
+    info!("Starting physics bridge demonstration");
+
+    // World-to-local at galactic-scale origin (1 unit = 1mm, 1000 units/m)
+    let upm: i128 = 1000;
+    let origin = WorldPosition::new(1_000_000_000_000, 0, 1_000_000_000_000);
+    let pos = WorldPosition::new(
+        1_000_000_000_000 + 100 * upm,
+        50 * upm,
+        1_000_000_000_000 + 200 * upm,
+    );
+    let local = world_to_local(&pos, &origin);
+    info!(
+        "world_to_local: offset ({}, {}, {}) m from 1-trillion-mm origin",
+        local.x, local.y, local.z
+    );
+    assert!((local.x - 100.0).abs() < f32::EPSILON);
+    assert!((local.y - 50.0).abs() < f32::EPSILON);
+    assert!((local.z - 200.0).abs() < f32::EPSILON);
+
+    // Roundtrip precision at 512m
+    let far = WorldPosition::new(
+        origin.x + 512 * upm,
+        origin.y + 512 * upm,
+        origin.z + 512 * upm,
+    );
+    let recovered = local_to_world(&world_to_local(&far, &origin), &origin);
+    let err = (recovered.x - far.x)
+        .abs()
+        .max((recovered.y - far.y).abs())
+        .max((recovered.z - far.z).abs());
+    info!("Roundtrip at 512m: max error = {} mm (must be ≤ 1)", err);
+    assert!(err <= 1);
+
+    info!("Physics bridge demonstration completed successfully");
+}
+
 /// Configure system ordering constraints for all engine stages.
 fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
@@ -2779,12 +2820,16 @@ fn main() {
     // Demonstrate physics island management
     demonstrate_physics_island();
 
+    // Demonstrate i128-to-f32 physics bridge
+    demonstrate_physics_bridge();
+
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
     ecs_world.insert_resource(nebula_ecs::CameraRes::default());
     ecs_world.insert_resource(nebula_player::FloatingOrigin::default());
     ecs_world.insert_resource(nebula_physics::PhysicsWorld::new());
     ecs_world.insert_resource(nebula_physics::PhysicsIsland::new());
+    ecs_world.insert_resource(nebula_physics::PhysicsOrigin::default());
     ecs_world.insert_resource(nebula_ecs::SpawnQueue::default());
     ecs_world.insert_resource(nebula_ecs::DespawnQueue::default());
     let mut ecs_schedules = nebula_ecs::EngineSchedules::new();
@@ -2807,9 +2852,25 @@ fn main() {
         })
         .in_set(nebula_ecs::PreUpdateSet::Input),
     );
+    // FixedUpdate ordering: island_update → recenter → bridge_write → step → bridge_read
     ecs_schedules.add_system(
         nebula_ecs::EngineSchedule::FixedUpdate,
-        nebula_physics::physics_step_system,
+        nebula_physics::recenter_physics_origin
+            .in_set(nebula_ecs::FixedUpdateSet::ForceApplication),
+    );
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::FixedUpdate,
+        nebula_physics::bridge_write_to_rapier
+            .in_set(nebula_ecs::FixedUpdateSet::ForceApplication)
+            .after(nebula_physics::recenter_physics_origin),
+    );
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::FixedUpdate,
+        nebula_physics::physics_step_system.in_set(nebula_ecs::FixedUpdateSet::PhysicsStep),
+    );
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::FixedUpdate,
+        nebula_physics::bridge_read_from_rapier.in_set(nebula_ecs::FixedUpdateSet::PhysicsSync),
     );
     ecs_schedules.add_system(nebula_ecs::EngineSchedule::FixedUpdate, || {
         tracing::debug!("Stage: FixedUpdate");

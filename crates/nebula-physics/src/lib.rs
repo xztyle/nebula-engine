@@ -3,8 +3,13 @@
 //! Wraps the Rapier 3D physics engine behind a single [`PhysicsWorld`] resource
 //! that owns all simulation state and exposes a minimal, engine-friendly API.
 
+pub mod physics_bridge;
 pub mod physics_island;
 
+pub use physics_bridge::{
+    PhysicsOrigin, bridge_read_from_rapier, bridge_write_to_rapier, local_to_world,
+    recenter_physics_origin, world_to_local,
+};
 pub use physics_island::{
     ChunkCoord, FrozenPhysicsState, IslandPlayer, IslandWorldPos, PhysicsEligible, PhysicsIsland,
     RigidBodyHandle, physics_island_update_system,
