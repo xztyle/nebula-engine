@@ -163,7 +163,8 @@ mod tests {
                     compatible_surface: None,
                     force_fallback_adapter: false,
                 })
-                .await?;
+                .await
+                .ok()?;
 
             let (device, _queue) = adapter
                 .request_device(&wgpu::DeviceDescriptor {
@@ -200,7 +201,9 @@ mod tests {
 
     #[test]
     fn test_pipeline_creation_succeeds() {
-        let Some(device) = create_test_device() else { return };
+        let Some(device) = create_test_device() else {
+            return;
+        };
         let shader = create_test_shader(&device, UNLIT_SHADER_SOURCE);
         let _pipeline = UnlitPipeline::new(
             &device,
@@ -248,7 +251,9 @@ mod tests {
 
     #[test]
     fn test_camera_bind_group_layout_has_one_entry() {
-        let Some(device) = create_test_device() else { return };
+        let Some(device) = create_test_device() else {
+            return;
+        };
         let pipeline = create_test_unlit_pipeline(&device);
         // The bind group layout should have exactly one entry at binding 0.
         // Verified by successfully creating a bind group with a single buffer.
@@ -271,7 +276,9 @@ mod tests {
 
     #[test]
     fn test_pipeline_without_depth() {
-        let Some(device) = create_test_device() else { return };
+        let Some(device) = create_test_device() else {
+            return;
+        };
         let shader = create_test_shader(&device, UNLIT_SHADER_SOURCE);
         // Creating a pipeline without depth should also succeed
         let _pipeline = UnlitPipeline::new(

@@ -188,7 +188,7 @@ mod tests {
         });
 
         let adapter =
-            pollster::block_on(instance.request_adapter(&RequestAdapterOptions::default()))?;
+            pollster::block_on(instance.request_adapter(&RequestAdapterOptions::default())).ok()?;
 
         let (device, _queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
             label: None,
