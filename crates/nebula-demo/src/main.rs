@@ -13,7 +13,7 @@ use nebula_cubesphere::PlanetDef;
 use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
 use nebula_voxel::{
     Chunk, ChunkAddress, ChunkData, ChunkLoadConfig, ChunkLoader, ChunkManager, Transparency,
-    VoxelTypeDef, VoxelTypeId, VoxelTypeRegistry,
+    VoxelEventBuffer, VoxelTypeDef, VoxelTypeId, VoxelTypeRegistry, set_voxel, set_voxels_batch,
 };
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
@@ -658,6 +658,66 @@ fn demonstrate_cow_chunks() {
     info!("Copy-on-Write chunk demonstration completed successfully");
 }
 
+/// Demonstrates voxel modification events.
+fn demonstrate_voxel_events() {
+    info!("Starting voxel modification events demonstration");
+
+    let mut manager = ChunkManager::new();
+    let mut events = VoxelEventBuffer::new();
+
+    let addr = ChunkAddress::new(0, 3, 0, 0);
+    manager.load_chunk(addr, Chunk::new());
+
+    // Single voxel modification
+    let stone = VoxelTypeId(1);
+    set_voxel(&mut manager, &addr, 5, 17, 8, stone, &mut events);
+
+    for evt in events.read() {
+        info!(
+            "VoxelModified {{ chunk: ({},{},{}), pos: ({},{},{}), old: {:?}, new: {:?} }}",
+            evt.chunk.x,
+            evt.chunk.y,
+            evt.chunk.z,
+            evt.local_pos.0,
+            evt.local_pos.1,
+            evt.local_pos.2,
+            evt.old_type,
+            evt.new_type,
+        );
+    }
+
+    // Same-type set produces no new event
+    let before = events.read().count();
+    set_voxel(&mut manager, &addr, 5, 17, 8, stone, &mut events);
+    let after = events.read().count();
+    info!(
+        "Same-type set: events before={}, after={} (no new event)",
+        before, after
+    );
+
+    // Batch modification
+    events.swap();
+    let dirt = VoxelTypeId(2);
+    let mods: Vec<_> = (0..5).map(|i| (i, 0, 0, dirt)).collect();
+    let count = set_voxels_batch(&mut manager, &addr, &mods, &mut events);
+    info!(
+        "Batch modified {} voxels, {} individual events, {} batch events",
+        count,
+        events.read().count(),
+        events.read_batch().count()
+    );
+
+    // Frame advance clears old events
+    events.swap();
+    events.swap();
+    info!(
+        "After 2 swaps: {} events remaining (expected 0)",
+        events.len()
+    );
+
+    info!("Voxel modification events demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -726,6 +786,9 @@ fn main() {
 
     // Demonstrate Copy-on-Write chunks
     demonstrate_cow_chunks();
+
+    // Demonstrate voxel modification events
+    demonstrate_voxel_events();
 
     // Log initial state
     let mut demo_state = DemoState::new();

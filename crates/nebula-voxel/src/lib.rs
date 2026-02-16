@@ -7,6 +7,7 @@ pub mod chunk_loading;
 pub mod chunk_manager;
 pub mod chunk_serial;
 pub mod cow_chunk;
+pub mod events;
 pub mod registry;
 pub mod rle;
 
@@ -16,4 +17,7 @@ pub use chunk_loading::{ChunkLoadConfig, ChunkLoadQueue, ChunkLoadTickResult, Ch
 pub use chunk_manager::{ChunkAddress, ChunkManager};
 pub use chunk_serial::{ChunkSerError, SerializeStats};
 pub use cow_chunk::CowChunk;
+pub use events::{
+    VoxelBatchModifiedEvent, VoxelEventBuffer, VoxelModifiedEvent, set_voxel, set_voxels_batch,
+};
 pub use registry::{RegistryError, Transparency, VoxelTypeDef, VoxelTypeId, VoxelTypeRegistry};
