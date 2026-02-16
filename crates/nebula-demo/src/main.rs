@@ -3250,6 +3250,127 @@ fn demonstrate_platform_tcp() {
     info!("Cross-platform TCP socket configuration demonstration completed successfully");
 }
 
+/// Demonstrates server-authoritative state: tick scheduling, intent validation,
+/// and authoritative world management.
+fn demonstrate_server_authoritative_state() {
+    use nebula_multiplayer::{
+        AuthoritativeWorld, ClientIntent, IntentValidator, PlayerState, ServerTickSchedule,
+    };
+
+    info!("Starting server-authoritative state demonstration");
+
+    // 1. Tick schedule at 60 Hz.
+    let mut schedule = ServerTickSchedule::new();
+    let ticks = schedule.accumulate(1.0);
+    info!(
+        "ServerTickSchedule: 1.0s → {} ticks (expected 60), tick_duration={:.4}s",
+        ticks,
+        schedule.tick_duration_secs()
+    );
+
+    // 2. Authoritative world with two players.
+    let mut world = AuthoritativeWorld::new();
+    world.spawn_player(PlayerState {
+        player_id: 1,
+        x: 0,
+        y: 0,
+        z: 0,
+        yaw_mrad: 0,
+        pitch_mrad: 0,
+    });
+    world.spawn_player(PlayerState {
+        player_id: 2,
+        x: 5000,
+        y: 0,
+        z: 0,
+        yaw_mrad: 0,
+        pitch_mrad: 0,
+    });
+    info!(
+        "AuthoritativeWorld: {} players, tick={}",
+        world.player_count(),
+        world.tick()
+    );
+
+    // 3. Validate legal intents.
+    let legal_move = ClientIntent::Move {
+        player_id: 1,
+        dx: 100,
+        dy: 0,
+        dz: 50,
+    };
+    let result = IntentValidator::validate(&legal_move, &world);
+    info!("Legal move validation: {:?}", result);
+
+    let legal_place = ClientIntent::PlaceVoxel {
+        player_id: 1,
+        voxel_type: 1,
+        x: 500,
+        y: 0,
+        z: 0,
+    };
+    let result = IntentValidator::validate(&legal_place, &world);
+    info!("Legal place validation: {:?}", result);
+
+    // 4. Reject speed hack.
+    let speed_hack = ClientIntent::Move {
+        player_id: 1,
+        dx: 99_999,
+        dy: 0,
+        dz: 0,
+    };
+    let result = IntentValidator::validate(&speed_hack, &world);
+    info!("Speed hack rejection: {:?}", result);
+
+    // 5. Reject out-of-range placement.
+    let far_place = ClientIntent::PlaceVoxel {
+        player_id: 2,
+        voxel_type: 3,
+        x: 100_000,
+        y: 100_000,
+        z: 100_000,
+    };
+    let result = IntentValidator::validate(&far_place, &world);
+    info!("Out-of-range rejection: {:?}", result);
+
+    // 6. Apply legal move and verify position update.
+    IntentValidator::validate_and_apply(&legal_move, &mut world).unwrap();
+    world.advance_tick();
+    let ps = world.find_player(1).unwrap();
+    info!(
+        "After move: player 1 at ({}, {}, {}), tick={}",
+        ps.x,
+        ps.y,
+        ps.z,
+        world.tick()
+    );
+
+    // 7. Simulate a few server ticks with intent processing.
+    let mut schedule = ServerTickSchedule::new();
+    let tick_count = schedule.accumulate(0.1); // ~6 ticks
+    for _ in 0..tick_count {
+        let intent = ClientIntent::Move {
+            player_id: 1,
+            dx: 50,
+            dy: 0,
+            dz: 0,
+        };
+        let _ = IntentValidator::validate_and_apply(&intent, &mut world);
+        world.advance_tick();
+    }
+    let ps = world.find_player(1).unwrap();
+    info!(
+        "After {} ticks: player 1 at ({}, {}, {}), total_tick={}",
+        tick_count,
+        ps.x,
+        ps.y,
+        ps.z,
+        world.tick()
+    );
+
+    info!("Server-authoritative state demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -3785,6 +3906,9 @@ fn main() {
 
     // Demonstrate cross-platform TCP socket configuration
     demonstrate_platform_tcp();
+
+    // Demonstrate server-authoritative state
+    demonstrate_server_authoritative_state();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {
