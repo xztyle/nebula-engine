@@ -6,10 +6,10 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::game_loop::{FIXED_DT, GameLoop};
+use crate::game_loop::GameLoop;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
-use nebula_render::gpu::{self, GpuContext};
+use nebula_render::{RenderContext, init_render_context_blocking};
 use tracing::{error, info, instrument, warn};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -52,7 +52,7 @@ pub struct AppState {
     /// The window handle, wrapped in `Arc` for sharing with the renderer.
     pub window: Option<Arc<Window>>,
     /// GPU context owning device, queue, and surface.
-    pub gpu: Option<GpuContext>,
+    pub gpu: Option<RenderContext>,
     /// Current surface width in physical pixels.
     pub surface_width: u32,
     /// Current surface height in physical pixels.
@@ -192,7 +192,7 @@ impl ApplicationHandler for AppState {
                 .expect("Failed to create window");
             let window = Arc::new(window);
 
-            match gpu::init_gpu_blocking(window.clone()) {
+            match init_render_context_blocking(window.clone()) {
                 Ok(ctx) => {
                     self.gpu = Some(ctx);
                 }
@@ -271,7 +271,7 @@ impl ApplicationHandler for AppState {
                         default_clear_color(self.tick_count)
                     };
 
-                    match gpu.surface.get_current_texture() {
+                    match gpu.get_current_texture() {
                         Ok(output) => {
                             let view = output
                                 .texture
@@ -300,19 +300,19 @@ impl ApplicationHandler for AppState {
                             gpu.queue.submit(std::iter::once(encoder.finish()));
                             output.present();
                         }
-                        Err(wgpu::SurfaceError::Lost) => {
+                        Err(nebula_render::SurfaceError::Lost) => {
                             let w = self.surface_width;
                             let h = self.surface_height;
                             if let Some(gpu) = &mut self.gpu {
                                 gpu.resize(w, h);
                             }
                         }
-                        Err(wgpu::SurfaceError::OutOfMemory) => {
+                        Err(nebula_render::SurfaceError::OutOfMemory) => {
                             error!("GPU out of memory");
                             event_loop.exit();
                         }
-                        Err(e) => {
-                            warn!("Surface error: {e}");
+                        Err(nebula_render::SurfaceError::Timeout) => {
+                            warn!("Surface timeout, skipping frame");
                         }
                     }
                 }
@@ -325,17 +325,15 @@ impl ApplicationHandler for AppState {
     }
 }
 
-/// Computes a pulsing deep-space blue clear color based on the tick count.
+/// Deep space blue clear color as specified in the plan.
 ///
-/// The blue channel oscillates between 0.02 and 0.08, proving the simulation
-/// loop is alive.
-pub fn default_clear_color(tick_count: u64) -> wgpu::Color {
-    let phase = (tick_count as f64 * FIXED_DT * std::f64::consts::TAU * 0.25).sin();
-    let blue = 0.05 + 0.03 * phase;
+/// Set to (0.02, 0.02, 0.08) - a steady deep space blue color.
+/// The window is now fully GPU-owned — wgpu controls every pixel.
+pub fn default_clear_color(_tick_count: u64) -> wgpu::Color {
     wgpu::Color {
         r: 0.02,
         g: 0.02,
-        b: blue,
+        b: 0.08,
         a: 1.0,
     }
 }
