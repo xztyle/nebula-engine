@@ -11,7 +11,7 @@ use glam::Vec2;
 use std::collections::HashMap;
 
 /// Unified button names that work across Xbox / PlayStation / generic pads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum UnifiedButton {
     /// A / Cross
     South,
