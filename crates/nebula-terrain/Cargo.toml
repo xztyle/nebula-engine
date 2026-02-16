@@ -3,3 +3,7 @@ name = "nebula-terrain"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+
+[dependencies]
+noise = "0.9"
+glam = { workspace = true }

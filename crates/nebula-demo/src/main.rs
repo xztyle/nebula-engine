@@ -1307,6 +1307,44 @@ fn demonstrate_mesh_invalidation() -> (usize, usize, usize) {
     )
 }
 
+/// Demonstrates multi-octave noise heightmap generation.
+fn demonstrate_heightmap() -> (f64, f64) {
+    use nebula_terrain::{HeightmapParams, HeightmapSampler};
+
+    info!("Starting multi-octave noise heightmap demonstration");
+
+    let params = HeightmapParams {
+        seed: 42,
+        octaves: 6,
+        amplitude: 128.0,
+        base_frequency: 0.01,
+        ..Default::default()
+    };
+    let sampler = HeightmapSampler::new(params);
+
+    let mut min_h = f64::MAX;
+    let mut max_h = f64::MIN;
+
+    // Sample a 64x64 grid to demonstrate terrain generation
+    for x in 0..64 {
+        for z in 0..64 {
+            let h = sampler.sample(x as f64, z as f64);
+            min_h = min_h.min(h);
+            max_h = max_h.max(h);
+        }
+    }
+
+    info!(
+        "Heightmap: {} octaves, range [{:.0}, {:.0}]",
+        sampler.params().octaves,
+        min_h,
+        max_h,
+    );
+
+    info!("Multi-octave noise heightmap demonstration completed successfully");
+    (min_h, max_h)
+}
+
 /// Configure system ordering constraints for all engine stages.
 fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
@@ -1427,6 +1465,9 @@ fn main() {
 
     // Demonstrate cubesphere vertex displacement
     let (disp_verts, disp_min, disp_max) = demonstrate_cubesphere_displacement();
+
+    // Demonstrate multi-octave noise heightmap
+    let (_hmap_min, _hmap_max) = demonstrate_heightmap();
 
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
