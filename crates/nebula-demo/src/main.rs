@@ -2863,6 +2863,64 @@ fn demonstrate_player_physics() {
     info!("Player character physics demonstration completed successfully");
 }
 
+/// Demonstrates gravity sources: a planet pulls a dynamic body toward its center.
+fn demonstrate_gravity_sources() {
+    use nebula_physics::{GravitySource, LocalGravity, compute_gravity};
+
+    info!("Starting gravity sources demonstration");
+
+    // Earth-like planet at origin
+    let planet_pos = WorldPosition::new(0, 0, 0);
+    let planet_source = GravitySource {
+        mass: 5.972e24,
+        surface_gravity: 9.81,
+        surface_radius: 6_371_000.0,
+        influence_radius: 100_000_000.0,
+        constant_near_surface: true,
+        atmosphere_height: 100_000.0,
+    };
+    let sources = vec![(planet_pos, &planet_source)];
+
+    // Player standing on north pole
+    let player_pos = WorldPosition::new(0, 6_371_100, 0);
+    let result = compute_gravity(&player_pos, &sources);
+    info!(
+        "Player on north pole: gravity dir=({:.3}, {:.3}, {:.3}), mag={:.3}",
+        result.direction.x, result.direction.y, result.direction.z, result.magnitude
+    );
+    assert!(
+        (result.direction.y - (-1.0)).abs() < 0.01,
+        "Gravity should point downward on north pole"
+    );
+    assert!(
+        (result.magnitude - 9.81).abs() < 0.1,
+        "Surface gravity should be ~9.81, got {}",
+        result.magnitude
+    );
+
+    // Player on equator (positive X)
+    let equator_pos = WorldPosition::new(6_371_100, 0, 0);
+    let result = compute_gravity(&equator_pos, &sources);
+    info!(
+        "Player on equator: gravity dir=({:.3}, {:.3}, {:.3}), mag={:.3}",
+        result.direction.x, result.direction.y, result.direction.z, result.magnitude
+    );
+    assert!(
+        (result.direction.x - (-1.0)).abs() < 0.01,
+        "Gravity should point toward center on equator"
+    );
+
+    // LocalGravity default
+    let local = LocalGravity::default();
+    assert_eq!(local.magnitude, 0.0);
+    info!(
+        "LocalGravity default: dir=({:.1}, {:.1}, {:.1}), mag={:.1}",
+        local.direction.x, local.direction.y, local.direction.z, local.magnitude
+    );
+
+    info!("Gravity sources demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -3023,6 +3081,9 @@ fn main() {
     // Demonstrate player character physics
     demonstrate_player_physics();
 
+    // Demonstrate gravity sources
+    demonstrate_gravity_sources();
+
     // Demonstrate voxel raycasting
     demonstrate_voxel_raycast();
 
@@ -3030,7 +3091,9 @@ fn main() {
     let mut ecs_world = nebula_ecs::create_world();
     ecs_world.insert_resource(nebula_ecs::CameraRes::default());
     ecs_world.insert_resource(nebula_player::FloatingOrigin::default());
-    ecs_world.insert_resource(nebula_physics::PhysicsWorld::new());
+    let mut phys_world = nebula_physics::PhysicsWorld::new();
+    phys_world.set_gravity(0.0, 0.0, 0.0); // Per-entity gravity via GravitySource
+    ecs_world.insert_resource(phys_world);
     ecs_world.insert_resource(nebula_physics::PhysicsIsland::new());
     ecs_world.insert_resource(nebula_physics::PhysicsOrigin::default());
     ecs_world.insert_resource(nebula_ecs::SpawnQueue::default());
@@ -3055,7 +3118,17 @@ fn main() {
         })
         .in_set(nebula_ecs::PreUpdateSet::Input),
     );
-    // FixedUpdate ordering: island_update → recenter → bridge_write → step → bridge_read
+    // FixedUpdate ordering: gravity_update → apply_gravity → recenter → bridge_write → step → bridge_read
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::FixedUpdate,
+        nebula_physics::gravity_update_system.in_set(nebula_ecs::FixedUpdateSet::ForceApplication),
+    );
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::FixedUpdate,
+        nebula_physics::apply_gravity_forces_system
+            .in_set(nebula_ecs::FixedUpdateSet::ForceApplication)
+            .after(nebula_physics::gravity_update_system),
+    );
     ecs_schedules.add_system(
         nebula_ecs::EngineSchedule::FixedUpdate,
         nebula_physics::recenter_physics_origin

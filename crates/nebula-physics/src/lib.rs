@@ -3,12 +3,17 @@
 //! Wraps the Rapier 3D physics engine behind a single [`PhysicsWorld`] resource
 //! that owns all simulation state and exposes a minimal, engine-friendly API.
 
+pub mod gravity;
 pub mod physics_bridge;
 pub mod physics_island;
 pub mod player_physics;
 pub mod voxel_collision;
 pub mod voxel_raycast;
 
+pub use gravity::{
+    GravityResult, GravitySource, LocalGravity, apply_gravity_forces_system, compute_gravity,
+    gravity_update_system,
+};
 pub use physics_bridge::{
     PhysicsOrigin, bridge_read_from_rapier, bridge_write_to_rapier, local_to_world,
     recenter_physics_origin, world_to_local,
