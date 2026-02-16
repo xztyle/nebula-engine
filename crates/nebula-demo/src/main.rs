@@ -2429,6 +2429,66 @@ fn demonstrate_lod_memory_budget() {
     info!("LOD memory budget demonstration completed successfully");
 }
 
+/// Demonstrates horizon culling: chunks below the planet's horizon are culled.
+fn demonstrate_horizon_culling() {
+    use glam::DVec3;
+    use nebula_lod::HorizonCuller;
+
+    info!("Starting horizon culling demonstration");
+
+    let radius = 6_400_000.0; // Earth-like radius in meters
+    let altitude = 1000.0; // 1 km above surface
+    let camera_pos = DVec3::new(0.0, radius + altitude, 0.0);
+    let planet_center = DVec3::ZERO;
+
+    let culler = HorizonCuller::new(camera_pos, planet_center, radius);
+
+    info!(
+        "  Camera altitude: {:.0} m, horizon distance: {:.0} m",
+        culler.camera_altitude(),
+        culler.horizon_distance()
+    );
+
+    // Test a grid of chunks around the planet and count culled vs visible
+    let mut total = 0u32;
+    let mut culled = 0u32;
+    let steps = 20;
+    for i in 0..steps {
+        for j in 0..steps {
+            let theta = std::f64::consts::PI * (i as f64 / (steps - 1) as f64);
+            let phi = 2.0 * std::f64::consts::PI * (j as f64 / steps as f64);
+            let chunk_center = DVec3::new(
+                radius * theta.sin() * phi.cos(),
+                radius * theta.cos(),
+                radius * theta.sin() * phi.sin(),
+            );
+            total += 1;
+            if !culler.is_above_horizon(chunk_center, 100.0) {
+                culled += 1;
+            }
+        }
+    }
+
+    let pct = (culled as f64 / total as f64 * 100.0).round() as u32;
+    info!(
+        "  Horizon culled: {}% of chunks ({}/{})",
+        pct, culled, total
+    );
+
+    assert!(culled > 0, "should cull at least some chunks");
+    assert!(culled < total, "should not cull all chunks");
+
+    // Verify chunk directly below is visible
+    let below = DVec3::new(0.0, radius, 0.0);
+    assert!(culler.is_above_horizon(below, 100.0));
+
+    // Verify antipodal chunk is culled
+    let antipodal = DVec3::new(0.0, -radius, 0.0);
+    assert!(!culler.is_above_horizon(antipodal, 100.0));
+
+    info!("Horizon culling demonstration completed successfully");
+}
+
 /// Configure system ordering constraints for all engine stages.
 fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
@@ -2591,6 +2651,9 @@ fn main() {
 
     // Demonstrate LOD memory budget
     demonstrate_lod_memory_budget();
+
+    // Demonstrate horizon culling
+    demonstrate_horizon_culling();
 
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();

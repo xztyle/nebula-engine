@@ -1,12 +1,14 @@
 //! Level-of-detail management: distance-based LOD selection, transition blending, and LOD quadtree.
 
 mod face_quadtree_lod;
+mod horizon_culling;
 mod memory_budget;
 mod planet_lod;
 mod priority_queue;
 mod selector;
 
 pub use face_quadtree_lod::{FaceQuadtreeLod, LodAction, LodChunkDescriptor};
+pub use horizon_culling::HorizonCuller;
 pub use memory_budget::{
     ChunkMemoryUsage, MemoryBudgetConfig, MemoryBudgetTracker, select_evictions,
 };
