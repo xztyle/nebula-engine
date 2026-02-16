@@ -3,6 +3,7 @@
 pub mod compression;
 pub mod framing;
 pub mod messages;
+pub mod reconnection;
 pub mod routing;
 pub mod session;
 pub mod tcp_client;
@@ -17,6 +18,10 @@ pub use messages::{
     ChunkData, EntityUpdate, LoginRequest, LoginResponse, Logout, Message, MessageError,
     PROTOCOL_VERSION, Ping, PlayerAction, PlayerPosition, Pong, TimeSync, deserialize_message,
     serialize_message,
+};
+pub use reconnection::{
+    ExtendedSessionState, GraceConfig, ReconnectConfig, ReconnectError, ReconnectState,
+    expire_suspended_sessions, reconnect_loop,
 };
 pub use routing::{
     HandlerContext, IncomingMessage, MessageHandler, MessageRouter, MessageTag, message_channel,

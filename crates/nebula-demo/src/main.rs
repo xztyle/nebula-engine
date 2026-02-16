@@ -3103,6 +3103,57 @@ fn demonstrate_network_compression() {
     info!("Network compression demonstration completed successfully");
 }
 
+fn demonstrate_reconnection_logic() {
+    info!("Starting reconnection logic demonstration");
+
+    // Show default reconnection config
+    let config = nebula_net::ReconnectConfig::default();
+    info!(
+        "ReconnectConfig: initial_delay={:?}, backoff_multiplier={}, max_delay={:?}, max_attempts={}, jitter={}",
+        config.initial_delay,
+        config.backoff_multiplier,
+        config.max_delay,
+        config.max_attempts,
+        config.jitter
+    );
+
+    // Demonstrate exponential backoff sequence (no jitter for clarity)
+    let mut state = nebula_net::ReconnectState::new(nebula_net::ReconnectConfig {
+        jitter: 0.0,
+        max_attempts: 6,
+        ..Default::default()
+    });
+    info!("Backoff sequence (no jitter, 6 attempts):");
+    while let Some(delay) = state.next_delay() {
+        info!("  Attempt {}: delay {:?}", state.attempts(), delay);
+    }
+    info!("  Max attempts exhausted after {} tries", state.attempts());
+
+    // Demonstrate reset
+    state.reset();
+    let d = state.next_delay().unwrap();
+    info!("After reset, first delay: {:?}", d);
+
+    // Grace period config
+    let grace = nebula_net::GraceConfig::default();
+    info!("GraceConfig: grace_period={:?}", grace.grace_period);
+
+    // Extended session states
+    let states = [
+        nebula_net::ExtendedSessionState::Authenticating,
+        nebula_net::ExtendedSessionState::Playing,
+        nebula_net::ExtendedSessionState::Suspended {
+            since: std::time::Instant::now(),
+        },
+        nebula_net::ExtendedSessionState::Removed,
+    ];
+    for s in &states {
+        info!("  ExtendedSessionState: {:?}", s);
+    }
+
+    info!("Reconnection logic demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -3612,6 +3663,9 @@ fn main() {
 
     // Demonstrate network compression
     demonstrate_network_compression();
+
+    // Demonstrate reconnection logic
+    demonstrate_reconnection_logic();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {
