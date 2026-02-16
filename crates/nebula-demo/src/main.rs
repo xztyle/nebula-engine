@@ -2874,10 +2874,31 @@ fn main() {
         demo_state.spatial_hash.count()
     );
 
-    nebula_app::window::run_with_config_and_input(config, move |dt, kb| {
+    // Camera yaw/pitch for mouse look (radians).
+    let mut yaw: f32 = 0.0;
+    let mut pitch: f32 = 0.0;
+
+    nebula_app::window::run_with_config_and_input(config, move |dt, kb, ms| {
         use winit::keyboard::{KeyCode, PhysicalKey};
 
         demo_state.update(dt);
+
+        // Mouse look: apply mouse delta to yaw/pitch.
+        let sensitivity = 0.003_f32;
+        let delta = ms.delta();
+        yaw -= delta.x * sensitivity;
+        pitch -= delta.y * sensitivity;
+        // Clamp pitch to avoid gimbal lock.
+        pitch = pitch.clamp(
+            -std::f32::consts::FRAC_PI_2 + 0.01,
+            std::f32::consts::FRAC_PI_2 - 0.01,
+        );
+
+        tracing::trace!(
+            "mouse delta=({:.1},{:.1}) yaw={yaw:.3} pitch={pitch:.3}",
+            delta.x,
+            delta.y
+        );
 
         // WASD camera movement (5 m/s = 5_000 mm/s)
         let speed: i128 = 5_000;

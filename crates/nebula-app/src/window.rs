@@ -72,7 +72,8 @@ pub type ClearColorFn = Box<dyn FnMut(u64) -> wgpu::Color>;
 /// Custom update function that gets called each simulation tick.
 pub type CustomUpdateFn = Box<dyn FnMut(f64)>;
 /// Custom update function that receives keyboard state each simulation tick.
-pub type CustomInputUpdateFn = Box<dyn FnMut(f64, &nebula_input::KeyboardState)>;
+pub type CustomInputUpdateFn =
+    Box<dyn FnMut(f64, &nebula_input::KeyboardState, &nebula_input::MouseState)>;
 
 /// Application state that manages the window, GPU context, and tracks surface dimensions.
 pub struct AppState {
@@ -214,6 +215,8 @@ pub struct AppState {
     pub lighting_context_buffer: Option<wgpu::Buffer>,
     /// Frame-coherent keyboard state.
     pub keyboard_state: nebula_input::KeyboardState,
+    /// Frame-coherent mouse state.
+    pub mouse_state: nebula_input::MouseState,
 }
 
 impl AppState {
@@ -293,6 +296,7 @@ impl AppState {
             lighting_atmo_config: LightingAtmosphereConfig::default(),
             lighting_context_buffer: None,
             keyboard_state: nebula_input::KeyboardState::new(),
+            mouse_state: nebula_input::MouseState::new(),
         }
     }
 
@@ -379,6 +383,7 @@ impl AppState {
             lighting_atmo_config: LightingAtmosphereConfig::default(),
             lighting_context_buffer: None,
             keyboard_state: nebula_input::KeyboardState::new(),
+            mouse_state: nebula_input::MouseState::new(),
         }
     }
 
@@ -1257,6 +1262,21 @@ impl ApplicationHandler for AppState {
             WindowEvent::KeyboardInput { event, .. } => {
                 self.keyboard_state.process_event(&event);
             }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.mouse_state.on_cursor_moved(position.x, position.y);
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.mouse_state.on_button(button, state);
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                self.mouse_state.on_scroll(delta);
+            }
+            WindowEvent::CursorEntered { .. } => {
+                self.mouse_state.on_cursor_entered();
+            }
+            WindowEvent::CursorLeft { .. } => {
+                self.mouse_state.on_cursor_left();
+            }
             WindowEvent::RedrawRequested => {
                 // Update debug state first
                 self.update_debug_state();
@@ -1272,6 +1292,7 @@ impl ApplicationHandler for AppState {
                 let custom_update = &mut self.custom_update;
                 let custom_input_update = &mut self.custom_input_update;
                 let keyboard_state = &self.keyboard_state;
+                let mouse_state = &self.mouse_state;
                 let camera = &mut self.camera;
                 let camera_time = &mut self.camera_time;
                 let camera_buffer = &self.camera_buffer;
@@ -1336,7 +1357,7 @@ impl ApplicationHandler for AppState {
                             update_fn(dt);
                         }
                         if let Some(update_fn) = custom_input_update {
-                            update_fn(dt, keyboard_state);
+                            update_fn(dt, keyboard_state, mouse_state);
                         }
                     },
                     |_alpha| {},
@@ -2142,14 +2163,26 @@ impl ApplicationHandler for AppState {
                         }
                     }
                 }
-                // Clear per-frame transient key state after all systems have run.
+                // Clear per-frame transient input state after all systems have run.
                 self.keyboard_state.clear_transients();
+                self.mouse_state.clear_transients();
 
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
             }
             _ => {}
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        if let winit::event::DeviceEvent::MouseMotion { delta } = event {
+            self.mouse_state.on_raw_motion(delta.0, delta.1);
         }
     }
 }
@@ -2214,13 +2247,13 @@ where
 #[instrument(skip_all)]
 pub fn run_with_config_and_input<T>(config: Config, mut custom_state: T)
 where
-    T: FnMut(f64, &nebula_input::KeyboardState) + 'static,
+    T: FnMut(f64, &nebula_input::KeyboardState, &nebula_input::MouseState) + 'static,
 {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut app = AppState::with_config(config);
 
-    app.custom_input_update = Some(Box::new(move |dt, kb| {
-        custom_state(dt, kb);
+    app.custom_input_update = Some(Box::new(move |dt, kb, ms| {
+        custom_state(dt, kb, ms);
     }));
 
     event_loop.run_app(&mut app).expect("Event loop failed");

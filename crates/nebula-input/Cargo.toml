@@ -5,4 +5,5 @@ version.workspace = true
 license.workspace = true
 
 [dependencies]
+glam = { workspace = true }
 winit = { workspace = true }
