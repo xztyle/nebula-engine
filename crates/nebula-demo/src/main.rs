@@ -7,7 +7,7 @@
 use clap::Parser;
 use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
-use nebula_render::{BufferAllocator, IndexData, VertexPositionColor};
+use nebula_render::{BufferAllocator, IndexData, ShaderLibrary, VertexPositionColor, load_shader};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use tracing::info;
@@ -252,6 +252,56 @@ fn demonstrate_buffer_management() {
     );
 
     info!("Buffer management demonstration completed successfully");
+
+    // Demonstrate shader module loading
+    info!("Starting shader module loading demonstration");
+
+    let mut shader_library = ShaderLibrary::new().with_shader_dir("assets/shaders");
+
+    // Load the unlit shader from source
+    let unlit_shader_source = r#"
+        struct VertexInput {
+            @location(0) position: vec3<f32>,
+            @location(1) color: vec4<f32>,
+        }
+
+        struct VertexOutput {
+            @builtin(position) clip_position: vec4<f32>,
+            @location(0) color: vec4<f32>,
+        }
+
+        @vertex
+        fn vs_main(input: VertexInput) -> VertexOutput {
+            var out: VertexOutput;
+            out.clip_position = vec4<f32>(input.position, 1.0);
+            out.color = input.color;
+            return out;
+        }
+
+        @fragment
+        fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+            return input.color;
+        }
+    "#;
+
+    match shader_library.load_from_source(&device, "unlit", unlit_shader_source) {
+        Ok(_) => info!("Compiled shader: unlit (from source)"),
+        Err(e) => info!("Failed to compile shader: {}", e),
+    }
+
+    // Try loading from file (this will work if the file exists)
+    match load_shader!(
+        shader_library,
+        &device,
+        "unlit_file",
+        "../../../assets/shaders/unlit.wgsl"
+    ) {
+        Ok(_) => info!("Compiled shader: unlit.wgsl"),
+        Err(e) => info!("Failed to load shader file: {}", e),
+    }
+
+    info!("Shader library contains {} shaders", shader_library.len());
+    info!("Shader module loading demonstration completed successfully");
 }
 
 fn main() {
