@@ -34,12 +34,14 @@ use std::marker::PhantomData;
 use glam::{UVec3, Vec3};
 
 // Re-export commonly used types from nebula-math
-pub use nebula_math::{Vec3I128, WorldPosition};
+pub use nebula_math::{Aabb128, Vec3I128, WorldPosition};
 
 // Modules
+mod frustum;
 mod spatial_hash;
 
 // Re-exports from modules
+pub use frustum::{Frustum128, Intersection, Plane128, PlaneSide};
 pub use spatial_hash::{EntityId, SpatialEntity, SpatialEntityMut, SpatialHashMap};
 
 // Additional vector types not in nebula-math
