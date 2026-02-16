@@ -1978,6 +1978,59 @@ fn demonstrate_async_chunk_generation() -> (usize, u64) {
     (received.len(), elapsed_ms)
 }
 
+/// Demonstrates distance-based LOD selection with default planet thresholds.
+fn demonstrate_distance_lod() {
+    use nebula_lod::{LodSelector, LodThresholds, chunk_distance_to_camera};
+
+    info!("Starting distance-based LOD demonstration");
+
+    let selector = LodSelector::new(LodThresholds::default_planet());
+
+    // Simulate chunks at varying distances and count LOD distribution.
+    let camera = nebula_coords::WorldPosition::default();
+    let mut lod_counts = [0u32; 6]; // L0..L5
+
+    // Place chunks in concentric shells around the camera.
+    let distances_m: &[f64] = &[
+        100.0, 200.0, 300.0, 400.0, 600.0, 800.0, 1500.0, 3000.0, 5000.0, 10000.0,
+    ];
+    let chunks_per_shell = 12u32;
+
+    for &dist in distances_m {
+        let dist_mm = (dist * 1000.0) as i128; // meters to millimeters
+        for i in 0..chunks_per_shell {
+            let angle = (i as f64) * std::f64::consts::TAU / (chunks_per_shell as f64);
+            let cx = (angle.cos() * dist_mm as f64) as i128;
+            let cz = (angle.sin() * dist_mm as f64) as i128;
+            let chunk_center = nebula_coords::WorldPosition::new(cx, 0, cz);
+            let d = chunk_distance_to_camera(&chunk_center, &camera);
+            // Convert mm distance to meters for LOD selection
+            let d_meters = d / 1000.0;
+            let lod = selector.select_lod(d_meters);
+            let idx = (lod as usize).min(lod_counts.len() - 1);
+            lod_counts[idx] += 1;
+        }
+    }
+
+    info!(
+        "LOD distribution: L0={}, L1={}, L2={}, L3={}, L4={}, L5={}",
+        lod_counts[0], lod_counts[1], lod_counts[2], lod_counts[3], lod_counts[4], lod_counts[5]
+    );
+
+    // Verify resolution mapping
+    for lod in 0..5u8 {
+        info!(
+            "  LOD {}: {}x{}x{} voxels per chunk",
+            lod,
+            LodSelector::resolution_for_lod(lod),
+            LodSelector::resolution_for_lod(lod),
+            LodSelector::resolution_for_lod(lod),
+        );
+    }
+
+    info!("Distance-based LOD demonstration completed successfully");
+}
+
 /// Configure system ordering constraints for all engine stages.
 fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
@@ -2119,6 +2172,9 @@ fn main() {
 
     // Demonstrate async chunk generation
     let (async_gen_chunks, async_gen_ms) = demonstrate_async_chunk_generation();
+
+    // Demonstrate distance-based LOD selection
+    demonstrate_distance_lod();
 
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();

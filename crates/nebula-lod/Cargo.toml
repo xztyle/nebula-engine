@@ -3,3 +3,6 @@ name = "nebula-lod"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+
+[dependencies]
+nebula-math = { path = "../nebula-math" }
