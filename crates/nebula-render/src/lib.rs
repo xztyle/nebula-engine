@@ -1,6 +1,7 @@
 //! wgpu rendering pipeline: surface management, render passes, shader loading, and frame graph orchestration.
 
 pub mod buffer;
+pub mod camera;
 pub mod gpu;
 pub mod pass;
 pub mod pipeline;
@@ -10,6 +11,7 @@ pub mod shader;
 pub use buffer::{
     BufferAllocator, IndexData, MeshBuffer, VertexPositionColor, VertexPositionNormalUv,
 };
+pub use camera::{Camera, Projection};
 pub use gpu::{RenderContext, RenderContextError, SurfaceError, init_render_context_blocking};
 pub use pass::{DepthAttachmentConfig, FrameEncoder, RenderPassBuilder, SKY_BLUE};
 pub use pipeline::{CameraUniform, UNLIT_SHADER_SOURCE, UnlitPipeline, draw_unlit};

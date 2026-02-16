@@ -3,6 +3,7 @@
 //! Provides [`AppState`] which implements winit's [`ApplicationHandler`] trait,
 //! and a [`run`] function to start the event loop.
 
+use glam;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -11,7 +12,7 @@ use bytemuck;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
 use nebula_render::{
-    BufferAllocator, CameraUniform, IndexData, MeshBuffer, RenderContext, ShaderLibrary,
+    BufferAllocator, Camera, IndexData, MeshBuffer, RenderContext, ShaderLibrary,
     UNLIT_SHADER_SOURCE, UnlitPipeline, VertexPositionColor, draw_unlit,
     init_render_context_blocking,
 };
@@ -88,6 +89,10 @@ pub struct AppState {
     pub camera_buffer: Option<wgpu::Buffer>,
     /// Camera bind group.
     pub camera_bind_group: Option<wgpu::BindGroup>,
+    /// 3D camera for rendering.
+    pub camera: Camera,
+    /// Time accumulator for camera animation.
+    pub camera_time: f64,
 }
 
 impl AppState {
@@ -115,6 +120,8 @@ impl AppState {
             triangle_mesh: None,
             camera_buffer: None,
             camera_bind_group: None,
+            camera: Camera::default(),
+            camera_time: 0.0,
         }
     }
 
@@ -149,6 +156,8 @@ impl AppState {
             triangle_mesh: None,
             camera_buffer: None,
             camera_bind_group: None,
+            camera: Camera::default(),
+            camera_time: 0.0,
         }
     }
 
@@ -207,15 +216,13 @@ impl AppState {
             IndexData::U16(&indices),
         );
 
-        // Create camera uniform buffer with identity matrix
-        let camera_uniform = CameraUniform {
-            view_proj: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-        };
+        // Initialize camera position (orbit around the triangle at distance 3)
+        self.camera.position = glam::Vec3::new(0.0, 0.0, 3.0);
+        self.camera
+            .set_aspect_ratio(self.surface_width as f32, self.surface_height as f32);
+
+        // Create camera uniform buffer with camera's view-projection matrix
+        let camera_uniform = self.camera.to_uniform();
 
         let camera_buffer = gpu
             .device
@@ -332,6 +339,11 @@ impl ApplicationHandler for AppState {
             WindowEvent::Resized(new_size) => {
                 self.surface_width = new_size.width;
                 self.surface_height = new_size.height;
+
+                // Update camera aspect ratio
+                self.camera
+                    .set_aspect_ratio(new_size.width as f32, new_size.height as f32);
+
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(new_size.width, new_size.height);
                 }
@@ -353,9 +365,45 @@ impl ApplicationHandler for AppState {
 
                 let tick_count = &mut self.tick_count;
                 let custom_update = &mut self.custom_update;
+                let camera = &mut self.camera;
+                let camera_time = &mut self.camera_time;
+                let camera_buffer = &self.camera_buffer;
+                let gpu = &self.gpu;
+
                 self.game_loop.tick(
                     |dt, _sim_time| {
                         *tick_count += 1;
+                        *camera_time += dt;
+
+                        // Update camera to orbit around the triangle
+                        let orbit_radius = 3.0f64;
+                        let orbit_speed = 0.5f64; // radians per second
+                        let angle = *camera_time * orbit_speed;
+
+                        // Position camera on a circular orbit around the origin
+                        camera.position = glam::Vec3::new(
+                            (angle.cos() * orbit_radius) as f32,
+                            0.0,
+                            (angle.sin() * orbit_radius) as f32,
+                        );
+
+                        // Make camera look at the origin (triangle center)
+                        let target = glam::Vec3::ZERO;
+                        let up = glam::Vec3::Y;
+                        let forward = (target - camera.position).normalize();
+                        let right = forward.cross(up).normalize();
+                        let camera_up = right.cross(forward).normalize();
+
+                        // Create rotation matrix from basis vectors
+                        let rotation_mat = glam::Mat3::from_cols(right, camera_up, -forward);
+                        camera.rotation = glam::Quat::from_mat3(&rotation_mat);
+
+                        // Update camera uniform buffer
+                        if let (Some(buffer), Some(gpu)) = (camera_buffer, gpu) {
+                            let uniform = camera.to_uniform();
+                            gpu.queue
+                                .write_buffer(buffer, 0, bytemuck::cast_slice(&[uniform]));
+                        }
 
                         // Call custom update function if provided
                         if let Some(update_fn) = custom_update {

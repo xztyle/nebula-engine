@@ -51,3 +51,4 @@ tiny_http = "0.12"
 wgpu = "28.0"
 winit = "0.30"
 bytemuck = { version = "1.21", features = ["derive"] }
+glam = "0.29"
