@@ -16,6 +16,13 @@ Nebula Engine is an AI-friendly voxel game engine written in Rust. Built to powe
 - Rust edition 2024, toolchain 1.93+
 - `cargo fmt` before every commit
 - `cargo clippy --workspace --all-targets -- -D warnings` must pass (always use `--all-targets` to match CI)
+- **After all checks pass, run the demo and validate via the AI Debug API:**
+  - `cargo run -p nebula-demo &` (background the demo)
+  - `curl http://localhost:9999/health` (verify engine is alive)
+  - `curl http://localhost:9999/metrics` (check FPS, frame time, no regressions)
+  - `curl http://localhost:9999/screenshot --output /tmp/nebula-screenshot.png` (capture visual state)
+  - Kill the demo process after validation
+  - **This is mandatory for every story. No exceptions.**
 - No `unwrap()` in library code -- use `Result`/`Option` properly
 - `unwrap()` acceptable in tests and demo code only
 - Max 500 lines per file. Split if exceeded.
