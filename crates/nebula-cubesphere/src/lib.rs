@@ -1,10 +1,12 @@
 //! Cube-sphere geometry: cube-to-sphere projection, face quadtree subdivision, and UV mapping.
 
+mod chunk_address;
 mod cube_face;
 mod face_coord;
 mod inverse;
 mod projection;
 
+pub use chunk_address::ChunkAddress;
 pub use cube_face::CubeFace;
 pub use face_coord::FaceCoord;
 pub use inverse::{direction_to_face, direction_to_face_coord, sphere_to_face_coord_everitt};
