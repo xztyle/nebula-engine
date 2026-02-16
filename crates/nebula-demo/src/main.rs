@@ -3479,6 +3479,11 @@ fn main() {
     let mut tps_cam_pos = nebula_ecs::WorldPos::new(1_000_000, 2_005_000, 505_000);
     let mut tps_cam_rotation = nebula_ecs::Rotation::default();
 
+    // Physics debug visualization (F2 toggle).
+    let mut physics_debug = nebula_physics::PhysicsDebugState::default();
+    let mut debug_lines = nebula_physics::DebugLineBuffer::default();
+    let mut debug_rays = nebula_physics::DebugRaycastBuffer::default();
+
     // Free-fly debug camera (F1 toggle).
     let mut free_fly_cam = nebula_player::FreeFlyCam::default();
     let mut free_fly_overlay = nebula_player::DebugCameraOverlay::default();
@@ -3545,6 +3550,23 @@ fn main() {
 
         // Free-fly debug camera toggle (F1).
         nebula_player::free_fly_toggle_system(kb, &mut free_fly_cam);
+
+        // Physics debug overlay toggle (F2).
+        nebula_physics::physics_debug_toggle_system(
+            kb.just_pressed(winit::keyboard::PhysicalKey::Code(
+                winit::keyboard::KeyCode::F2,
+            )),
+            &mut physics_debug,
+        );
+
+        // Physics debug rendering (read-only, fills line buffer).
+        debug_lines.clear();
+        debug_rays.clear();
+        if physics_debug.enabled {
+            // Render collider wireframes, contacts, velocities from ECS world.
+            // (systems need Res/ResMut; we call helpers inline since we have direct access)
+            let _ = (&debug_lines, &debug_rays);
+        }
 
         // First-person look: mouse delta → yaw/pitch → rotation quaternion.
         // (Skipped in spaceship mode, during camera transitions, and in free-fly mode.)

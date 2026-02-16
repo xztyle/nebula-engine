@@ -5,6 +5,7 @@
 
 pub mod gravity;
 pub mod physics_bridge;
+pub mod physics_debug;
 pub mod physics_island;
 pub mod physics_region;
 #[cfg(test)]
@@ -21,6 +22,12 @@ pub use gravity::{
 pub use physics_bridge::{
     PhysicsOrigin, bridge_read_from_rapier, bridge_write_to_rapier, local_to_world,
     recenter_physics_origin, world_to_local,
+};
+pub use physics_debug::{
+    COLORS as PHYSICS_DEBUG_COLORS, DebugLine, DebugLineBuffer, DebugRay, DebugRaycastBuffer,
+    PhysicsDebugColors, PhysicsDebugState, debug_render_colliders_system,
+    debug_render_contacts_system, debug_render_raycasts_system, debug_render_velocities_system,
+    physics_debug_toggle_system,
 };
 pub use physics_island::{
     ChunkCoord, FrozenPhysicsState, IslandPlayer, IslandWorldPos, PhysicsEligible, PhysicsIsland,
