@@ -25,8 +25,9 @@ use nebula_render::{
     init_render_context_blocking,
 };
 use nebula_space::{
-    NebulaConfig, NebulaGenerator, SkyboxRenderer, StarType, StarfieldCubemap, StarfieldGenerator,
-    SunProperties, SunRenderer,
+    DistantPlanet, ImpostorInstance, NebulaConfig, NebulaGenerator, OrbitalElements,
+    PlanetImpostorRenderer, SkyboxRenderer, StarType, StarfieldCubemap, StarfieldGenerator,
+    SunProperties, SunRenderer, billboard_local_sun_dir,
 };
 use tracing::{error, info, instrument, warn};
 use winit::application::ApplicationHandler;
@@ -163,6 +164,10 @@ pub struct AppState {
     pub sun_renderer: Option<SunRenderer>,
     /// Screen-space lens flare renderer.
     pub lens_flare: Option<nebula_render::LensFlareRenderer>,
+    /// Distant planet impostor renderer (crescent-shaded billboards).
+    pub distant_impostor: Option<PlanetImpostorRenderer>,
+    /// Distant planets with orbital elements for impostor rendering.
+    pub distant_planets: Vec<(DistantPlanet, OrbitalElements)>,
 }
 
 impl AppState {
@@ -221,6 +226,8 @@ impl AppState {
             bloom_pipeline: None,
             sun_renderer: None,
             lens_flare: None,
+            distant_impostor: None,
+            distant_planets: Vec::new(),
         }
     }
 
@@ -286,6 +293,8 @@ impl AppState {
             bloom_pipeline: None,
             sun_renderer: None,
             lens_flare: None,
+            distant_impostor: None,
+            distant_planets: Vec::new(),
         }
     }
 
@@ -544,6 +553,78 @@ impl AppState {
         // --- Lens flare renderer (screen-space flare elements in HDR) ---
         let lens_flare = nebula_render::LensFlareRenderer::new(&gpu.device, hdr_format);
         self.lens_flare = Some(lens_flare);
+
+        // --- Distant planet impostor renderer (crescent-shaded billboards) ---
+        let distant_impostor = PlanetImpostorRenderer::new(&gpu.device, hdr_format);
+        self.distant_impostor = Some(distant_impostor);
+
+        // Demo distant planets: a Mars-like and a gas giant
+        self.distant_planets = vec![
+            (
+                DistantPlanet {
+                    id: 1,
+                    position: [0; 3],
+                    radius: planet_radius as f64 * 0.6,
+                    albedo: 0.25,
+                    color: [0.9, 0.5, 0.3],
+                    has_atmosphere: false,
+                    atmosphere_color: [0.0; 3],
+                },
+                OrbitalElements {
+                    semi_major_axis: planet_radius as f64 * 12.0,
+                    eccentricity: 0.05,
+                    inclination: 0.05,
+                    longitude_ascending: 0.0,
+                    argument_periapsis: 0.0,
+                    mean_anomaly_epoch: 0.0,
+                    orbital_period: 200.0,
+                },
+            ),
+            (
+                DistantPlanet {
+                    id: 2,
+                    position: [0; 3],
+                    radius: planet_radius as f64 * 1.5,
+                    albedo: 0.4,
+                    color: [0.7, 0.6, 0.4],
+                    has_atmosphere: true,
+                    atmosphere_color: [0.5, 0.7, 1.0],
+                },
+                OrbitalElements {
+                    semi_major_axis: planet_radius as f64 * 20.0,
+                    eccentricity: 0.02,
+                    inclination: 0.1,
+                    longitude_ascending: 1.0,
+                    argument_periapsis: 0.5,
+                    mean_anomaly_epoch: 1.5,
+                    orbital_period: 400.0,
+                },
+            ),
+            (
+                DistantPlanet {
+                    id: 3,
+                    position: [0; 3],
+                    radius: planet_radius as f64 * 0.4,
+                    albedo: 0.6,
+                    color: [0.9, 0.9, 0.8],
+                    has_atmosphere: true,
+                    atmosphere_color: [0.8, 0.85, 1.0],
+                },
+                OrbitalElements {
+                    semi_major_axis: planet_radius as f64 * 6.0,
+                    eccentricity: 0.0,
+                    inclination: 0.02,
+                    longitude_ascending: 0.5,
+                    argument_periapsis: 0.0,
+                    mean_anomaly_epoch: 2.5,
+                    orbital_period: 80.0,
+                },
+            ),
+        ];
+        info!(
+            "Distant planet impostors initialized: {} planets",
+            self.distant_planets.len()
+        );
 
         // --- Ocean surface renderer ---
         self.initialize_ocean_renderer(gpu, planet_radius);
@@ -1112,6 +1193,69 @@ impl ApplicationHandler for AppState {
                                         let mut flare_pass = frame_encoder
                                             .begin_render_pass_to(&flare_pb, bloom.hdr_view());
                                         flare.render(&mut flare_pass, flare.element_count());
+                                    }
+                                }
+
+                                // Render distant planet impostors to HDR (after sun/flare, before bloom)
+                                if let Some(distant) = &mut self.distant_impostor {
+                                    let time_s = self.camera_time;
+                                    let sun_dir = self.day_night.sun_direction;
+
+                                    // Build a Camera struct for billboard orientation
+                                    let rot_mat = glam::Mat3::from_cols(right, up, -forward);
+                                    let cam_rotation = glam::Quat::from_mat3(&rot_mat);
+                                    let sky_cam = Camera {
+                                        position: glam::Vec3::ZERO,
+                                        rotation: cam_rotation,
+                                        ..Camera::default()
+                                    };
+
+                                    let mut instances = Vec::new();
+                                    for (planet, orbit) in &self.distant_planets {
+                                        let orbital_pos = orbit.position_at_time(time_s);
+                                        let rel = orbital_pos.as_vec3();
+                                        let dist = rel.length() as f64;
+                                        if dist < 1e-6 {
+                                            continue;
+                                        }
+                                        let direction = rel / rel.length();
+                                        let ang_radius =
+                                            (planet.angular_diameter(dist) * 0.5) as f32;
+                                        // Ensure minimum visible size
+                                        let ang_radius = ang_radius.max(0.003);
+
+                                        let planet_to_sun = glam::DVec3::from(sun_dir).normalize();
+                                        let to_observer = -orbital_pos.normalize();
+                                        let phase_angle = DistantPlanet::compute_phase_angle(
+                                            planet_to_sun,
+                                            to_observer,
+                                        );
+                                        let brightness = planet.phase_brightness(phase_angle);
+
+                                        let sun_local =
+                                            billboard_local_sun_dir(direction, sun_dir, &sky_cam);
+
+                                        instances.push(ImpostorInstance {
+                                            position: direction.into(),
+                                            scale: ang_radius,
+                                            color: planet.color,
+                                            brightness: brightness.max(0.15),
+                                            sun_dir_local: sun_local.into(),
+                                            has_atmosphere: planet.has_atmosphere as u32,
+                                            atmosphere_color: planet.atmosphere_color,
+                                            _padding: 0.0,
+                                        });
+                                    }
+
+                                    distant.update(&gpu.queue, vp_rot, &instances);
+
+                                    let impostor_pb = RenderPassBuilder::new()
+                                        .preserve_color()
+                                        .label("distant-planet-impostor-pass");
+                                    {
+                                        let mut pass = frame_encoder
+                                            .begin_render_pass_to(&impostor_pb, bloom.hdr_view());
+                                        distant.render(&mut pass);
                                     }
                                 }
 
