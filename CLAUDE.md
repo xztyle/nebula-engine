@@ -17,13 +17,20 @@ Nebula Engine is an AI-friendly voxel game engine written in Rust. Built to powe
 - `cargo fmt` before every commit
 - `cargo clippy --workspace --all-targets -- -D warnings` must pass (always use `--all-targets` to match CI)
 - **After all checks pass, run the demo and validate via the AI Debug API:**
-  - `cargo run -p nebula-demo &` (background the demo)
-  - `curl http://localhost:9999/health` (verify engine is alive)
-  - `curl http://localhost:9999/metrics` (check FPS, frame time, no regressions)
+  - `cargo run -p nebula-demo &` (background the demo, wait 3-5 seconds for startup)
+  - `curl http://localhost:9999/health` (verify engine is alive -- must return `{"status":"ok"}`)
+  - `curl http://localhost:9999/metrics` (check FPS, frame time, entity count, window dimensions)
+  - **FPS regression check**: If FPS dropped >15% vs previous story, investigate before committing
   - `curl http://localhost:9999/screenshot --output /tmp/nebula-screenshot.png` (capture visual state)
-  - **Verify the screenshot is not just a black frame** -- check file size > 10KB or inspect pixels
+  - **VISUAL VERIFICATION (mandatory):**
+    1. Check screenshot file size: must be > 10KB (a blank/black frame is ~2-5KB)
+    2. Use `file /tmp/nebula-screenshot.png` to confirm it's a valid PNG
+    3. Use `python3 -c "from PIL import Image; img=Image.open('/tmp/nebula-screenshot.png'); pixels=img.getdata(); unique=len(set(list(pixels)[:1000])); print(f'Unique colors in sample: {unique}')"` -- must be > 1 (not solid color)
+    4. If the story adds visible geometry, the screenshot MUST show that geometry
+    5. If the screenshot looks wrong (all black, all one color, missing expected content), the story is NOT done
   - Kill the demo process after validation
-  - **This is mandatory for every story. No exceptions.**
+  - **This is mandatory for every story. No exceptions. Do not skip visual checks.**
+  - **If the demo fails to start, crashes, or produces a blank screenshot, fix it before committing.**
 - No `unwrap()` in library code -- use `Result`/`Option` properly
 - `unwrap()` acceptable in tests and demo code only
 - Max 500 lines per file. Split if exceeded.
