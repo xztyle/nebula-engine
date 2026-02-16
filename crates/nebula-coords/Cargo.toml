@@ -7,3 +7,6 @@ license.workspace = true
 [dependencies]
 nebula-math = { path = "../nebula-math" }
 glam = "0.29"
+
+[dev-dependencies]
+trybuild = "1.0"

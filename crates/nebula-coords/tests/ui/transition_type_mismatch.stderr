@@ -1,0 +1,26 @@
+error[E0277]: the trait bound `nebula_coords::PlanetToChunk: Transition<SectorSpace, _>` is not satisfied
+ --> tests/ui/transition_type_mismatch.rs:6:54
+  |
+6 |       let _invalid_composition = UniverseToSector.then(PlanetToChunk {
+  |  _________________________________________________----_^
+  | |                                                 |
+  | |                                                 required by a bound introduced by this call
+7 | |         chunk_origin: Vec3I64::new(0, 0, 0),
+8 | |     });
+  | |_____^ the trait `Transition<SectorSpace, _>` is not implemented for `nebula_coords::PlanetToChunk`
+  |
+help: the trait `Transition<SectorSpace, _>` is not implemented for `nebula_coords::PlanetToChunk`
+      but trait `Transition<PlanetSpace, ChunkSpace>` is implemented for it
+ --> src/lib.rs
+  |
+  | impl Transition<PlanetSpace, ChunkSpace> for PlanetToChunk {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = help: for that trait implementation, expected `PlanetSpace`, found `SectorSpace`
+note: required by a bound in `then`
+ --> src/lib.rs
+  |
+  |     fn then<To, Next>(self, next: Next) -> Composed<From, To, Mid, Self, Next>
+  |        ---- required by a bound in this associated function
+  |     where
+  |         Next: Transition<Mid, To, Input = Self::Output>,
+  |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `TransitionExt::then`

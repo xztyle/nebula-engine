@@ -52,6 +52,22 @@ impl Vec3I64 {
     }
 }
 
+impl std::ops::Sub for Vec3I64 {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        Self::new(self.x - other.x, self.y - other.y, self.z - other.z)
+    }
+}
+
+impl std::ops::Add for Vec3I64 {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self::new(self.x + other.x, self.y + other.y, self.z + other.z)
+    }
+}
+
 /// 32-bit signed integer 3D vector for sector local offsets
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -381,6 +397,275 @@ pub fn local_to_universe(
         (pos.value.z / MM_TO_METERS) as i128,
     );
     Pos::new(camera_pos.value + offset_mm)
+}
+
+// Coordinate Frame Transitions (Plan 03_coords/03)
+
+/// Trait for any object that can convert a position from space `From` to space `To`.
+pub trait Transition<From, To> {
+    type Input;
+    type Output;
+
+    /// Convert a position from the source space to the target space.
+    fn apply(&self, pos: &Pos<From, Self::Input>) -> Pos<To, Self::Output>;
+}
+
+/// Extension trait providing the `then` combinator.
+pub trait TransitionExt<From, Mid>: Transition<From, Mid> + Sized {
+    fn then<To, Next>(self, next: Next) -> Composed<From, To, Mid, Self, Next>
+    where
+        Next: Transition<Mid, To, Input = Self::Output>,
+    {
+        Composed {
+            first: self,
+            second: next,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<T, From, Mid> TransitionExt<From, Mid> for T where T: Transition<From, Mid> {}
+
+/// A composed transition that applies `first` then `second`.
+pub struct Composed<A, B, Mid, First, Second>
+where
+    First: Transition<A, Mid>,
+    Second: Transition<Mid, B>,
+{
+    pub first: First,
+    pub second: Second,
+    _phantom: PhantomData<(A, B, Mid)>,
+}
+
+impl<A, B, Mid, First, Second> Transition<A, B> for Composed<A, B, Mid, First, Second>
+where
+    First: Transition<A, Mid>,
+    Second: Transition<Mid, B, Input = First::Output>,
+{
+    type Input = First::Input;
+    type Output = Second::Output;
+
+    fn apply(&self, pos: &Pos<A, Self::Input>) -> Pos<B, Self::Output> {
+        let mid = self.first.apply(pos);
+        self.second.apply(&mid)
+    }
+}
+
+/// Trait for transitions that can be inverted.
+pub trait Invertible<From, To>: Transition<From, To> {
+    type Inverse: Transition<To, From>;
+    fn inverse(&self) -> Self::Inverse;
+}
+
+/// Identity transition - converts a position to the same space (no-op).
+pub struct Identity<S, T>(PhantomData<(S, T)>);
+
+impl<S, T> Default for Identity<S, T> {
+    fn default() -> Self {
+        Identity(PhantomData)
+    }
+}
+
+impl<S, T: Clone> Transition<S, S> for Identity<S, T> {
+    type Input = T;
+    type Output = T;
+
+    fn apply(&self, pos: &Pos<S, T>) -> Pos<S, T> {
+        Pos::new(pos.value.clone())
+    }
+}
+
+// Concrete Transition Types
+
+/// Universe to Sector transition - pure bitwise decomposition.
+pub struct UniverseToSector;
+
+impl Transition<UniverseSpace, SectorSpace> for UniverseToSector {
+    type Input = nebula_math::Vec3I128;
+    type Output = SectorCoord;
+
+    fn apply(
+        &self,
+        pos: &Pos<UniverseSpace, nebula_math::Vec3I128>,
+    ) -> Pos<SectorSpace, SectorCoord> {
+        let world_pos = WorldPosition::new(pos.value.x, pos.value.y, pos.value.z);
+        Pos::new(SectorCoord::from_world(&world_pos))
+    }
+}
+
+/// Sector to Universe transition - reconstruct from sector coordinates.
+pub struct SectorToUniverse;
+
+impl Transition<SectorSpace, UniverseSpace> for SectorToUniverse {
+    type Input = SectorCoord;
+    type Output = nebula_math::Vec3I128;
+
+    fn apply(
+        &self,
+        pos: &Pos<SectorSpace, SectorCoord>,
+    ) -> Pos<UniverseSpace, nebula_math::Vec3I128> {
+        let world_pos = pos.value.to_world();
+        Pos::new(nebula_math::Vec3I128::new(
+            world_pos.x,
+            world_pos.y,
+            world_pos.z,
+        ))
+    }
+}
+
+impl Invertible<UniverseSpace, SectorSpace> for UniverseToSector {
+    type Inverse = SectorToUniverse;
+
+    fn inverse(&self) -> Self::Inverse {
+        SectorToUniverse
+    }
+}
+
+impl Invertible<SectorSpace, UniverseSpace> for SectorToUniverse {
+    type Inverse = UniverseToSector;
+
+    fn inverse(&self) -> Self::Inverse {
+        UniverseToSector
+    }
+}
+
+/// Sector to Planet transition - requires the planet's universe-space origin, decomposed into sector coordinates.
+pub struct SectorToPlanet {
+    /// The planet center's sector coordinate.
+    pub planet_origin: SectorCoord,
+}
+
+impl Transition<SectorSpace, PlanetSpace> for SectorToPlanet {
+    type Input = SectorCoord;
+    type Output = Vec3I64;
+
+    fn apply(&self, pos: &Pos<SectorSpace, SectorCoord>) -> Pos<PlanetSpace, Vec3I64> {
+        // Reconstruct both positions to i128, subtract, truncate to i64.
+        let world = pos.value.to_world();
+        let origin = self.planet_origin.to_world();
+        let delta = world - origin;
+        Pos::new(Vec3I64::new(delta.x as i64, delta.y as i64, delta.z as i64))
+    }
+}
+
+/// Planet to Sector transition.
+pub struct PlanetToSector {
+    /// The planet center's sector coordinate.
+    pub planet_origin: SectorCoord,
+}
+
+impl Transition<PlanetSpace, SectorSpace> for PlanetToSector {
+    type Input = Vec3I64;
+    type Output = SectorCoord;
+
+    fn apply(&self, pos: &Pos<PlanetSpace, Vec3I64>) -> Pos<SectorSpace, SectorCoord> {
+        let origin_world = self.planet_origin.to_world();
+        let offset = nebula_math::Vec3I128::new(
+            pos.value.x as i128,
+            pos.value.y as i128,
+            pos.value.z as i128,
+        );
+        let world_pos = WorldPosition::new(
+            origin_world.x + offset.x,
+            origin_world.y + offset.y,
+            origin_world.z + offset.z,
+        );
+        Pos::new(SectorCoord::from_world(&world_pos))
+    }
+}
+
+impl Invertible<SectorSpace, PlanetSpace> for SectorToPlanet {
+    type Inverse = PlanetToSector;
+
+    fn inverse(&self) -> Self::Inverse {
+        PlanetToSector {
+            planet_origin: self.planet_origin,
+        }
+    }
+}
+
+/// Planet to Chunk transition - requires the chunk's origin in planet space.
+pub struct PlanetToChunk {
+    /// The chunk's origin corner in planet-space millimeters.
+    pub chunk_origin: Vec3I64,
+}
+
+impl Transition<PlanetSpace, ChunkSpace> for PlanetToChunk {
+    type Input = Vec3I64;
+    type Output = UVec3;
+
+    fn apply(&self, pos: &Pos<PlanetSpace, Vec3I64>) -> Pos<ChunkSpace, UVec3> {
+        let local = pos.value - self.chunk_origin;
+        Pos::new(UVec3::new(local.x as u32, local.y as u32, local.z as u32))
+    }
+}
+
+/// Chunk to Planet transition.
+pub struct ChunkToPlanet {
+    /// The chunk's origin corner in planet-space millimeters.
+    pub chunk_origin: Vec3I64,
+}
+
+impl Transition<ChunkSpace, PlanetSpace> for ChunkToPlanet {
+    type Input = UVec3;
+    type Output = Vec3I64;
+
+    fn apply(&self, pos: &Pos<ChunkSpace, UVec3>) -> Pos<PlanetSpace, Vec3I64> {
+        let x = self.chunk_origin.x + pos.value.x as i64;
+        let y = self.chunk_origin.y + pos.value.y as i64;
+        let z = self.chunk_origin.z + pos.value.z as i64;
+        Pos::new(Vec3I64::new(x, y, z))
+    }
+}
+
+impl Invertible<PlanetSpace, ChunkSpace> for PlanetToChunk {
+    type Inverse = ChunkToPlanet;
+
+    fn inverse(&self) -> Self::Inverse {
+        ChunkToPlanet {
+            chunk_origin: self.chunk_origin,
+        }
+    }
+}
+
+/// Chunk to Local (Camera) transition - requires the camera's position in chunk space.
+pub struct ChunkToLocal {
+    /// The chunk's origin expressed in camera-local meters (f32).
+    pub chunk_origin_in_camera: Vec3,
+}
+
+impl Transition<ChunkSpace, LocalSpace> for ChunkToLocal {
+    type Input = UVec3;
+    type Output = Vec3;
+
+    fn apply(&self, pos: &Pos<ChunkSpace, UVec3>) -> Pos<LocalSpace, Vec3> {
+        let meters = Vec3::new(
+            pos.value.x as f32 * MM_TO_METERS,
+            pos.value.y as f32 * MM_TO_METERS,
+            pos.value.z as f32 * MM_TO_METERS,
+        );
+        Pos::new(self.chunk_origin_in_camera + meters)
+    }
+}
+
+/// Universe to Local transition - direct conversion for convenience.
+pub struct UniverseToLocal {
+    /// The camera's universe-space position.
+    pub camera_pos: nebula_math::Vec3I128,
+}
+
+impl Transition<UniverseSpace, LocalSpace> for UniverseToLocal {
+    type Input = nebula_math::Vec3I128;
+    type Output = Vec3;
+
+    fn apply(&self, pos: &Pos<UniverseSpace, nebula_math::Vec3I128>) -> Pos<LocalSpace, Vec3> {
+        let delta = pos.value - self.camera_pos;
+        Pos::new(Vec3::new(
+            delta.x as f32 * MM_TO_METERS,
+            delta.y as f32 * MM_TO_METERS,
+            delta.z as f32 * MM_TO_METERS,
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -744,5 +1029,177 @@ mod tests {
             z: 99,
         });
         assert_eq!(map.get(&key_not_in_map), None);
+    }
+
+    // Coordinate Frame Transition Tests (Plan 03_coords/03)
+
+    #[test]
+    fn test_identity_transition() {
+        let identity = Identity::<UniverseSpace, nebula_math::Vec3I128>::default();
+        let pos = Pos::<UniverseSpace, nebula_math::Vec3I128>::new(nebula_math::Vec3I128::new(
+            100, 200, 300,
+        ));
+
+        let result = identity.apply(&pos);
+        assert_eq!(result.value, pos.value);
+    }
+
+    #[test]
+    fn test_compose_two_transitions_equals_direct() {
+        let universe_pos = Pos::<UniverseSpace, nebula_math::Vec3I128>::new(
+            nebula_math::Vec3I128::new(1_000_000_000, 2_000_000_000, 3_000_000_000),
+        );
+
+        let planet_origin = SectorCoord {
+            sector: SectorIndex { x: 0, y: 0, z: 0 },
+            offset: SectorOffset { x: 0, y: 0, z: 0 },
+        };
+
+        // Apply transitions separately
+        let universe_to_sector = UniverseToSector;
+        let sector_pos = universe_to_sector.apply(&universe_pos);
+
+        let sector_to_planet = SectorToPlanet { planet_origin };
+        let planet_pos1 = sector_to_planet.apply(&sector_pos);
+
+        // Apply composed transition
+        let composed = universe_to_sector.then(sector_to_planet);
+        let planet_pos2 = composed.apply(&universe_pos);
+
+        assert_eq!(planet_pos1.value, planet_pos2.value);
+    }
+
+    #[test]
+    fn test_compose_full_chain() {
+        let universe_pos = Pos::<UniverseSpace, nebula_math::Vec3I128>::new(
+            nebula_math::Vec3I128::new(10_000, 20_000, 30_000),
+        );
+
+        let planet_origin = SectorCoord {
+            sector: SectorIndex { x: 0, y: 0, z: 0 },
+            offset: SectorOffset { x: 0, y: 0, z: 0 },
+        };
+
+        let chunk_origin = Vec3I64::new(0, 0, 0);
+        let camera_origin = Vec3::new(0.0, 0.0, 0.0);
+
+        let full_chain = UniverseToSector
+            .then(SectorToPlanet { planet_origin })
+            .then(PlanetToChunk { chunk_origin })
+            .then(ChunkToLocal {
+                chunk_origin_in_camera: camera_origin,
+            });
+
+        let local_pos = full_chain.apply(&universe_pos);
+
+        // Should be Pos<LocalSpace, Vec3>
+        assert_eq!(Pos::<LocalSpace, Vec3>::space_name(), "Local");
+
+        // Check that the coordinates are converted to meters
+        let expected_x = 10_000_f32 * MM_TO_METERS; // 10m
+        let expected_y = 20_000_f32 * MM_TO_METERS; // 20m
+        let expected_z = 30_000_f32 * MM_TO_METERS; // 30m
+
+        assert!((local_pos.value.x - expected_x).abs() < f32::EPSILON);
+        assert!((local_pos.value.y - expected_y).abs() < f32::EPSILON);
+        assert!((local_pos.value.z - expected_z).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_inverse_transition_roundtrips() {
+        let universe_pos = Pos::<UniverseSpace, nebula_math::Vec3I128>::new(
+            nebula_math::Vec3I128::new(1_000_000, 2_000_000, 3_000_000),
+        );
+
+        let universe_to_sector = UniverseToSector;
+        let sector_pos = universe_to_sector.apply(&universe_pos);
+
+        let inverse = universe_to_sector.inverse();
+        let roundtrip = inverse.apply(&sector_pos);
+
+        assert_eq!(universe_pos.value, roundtrip.value);
+    }
+
+    #[test]
+    fn test_composed_inverse_roundtrips() {
+        let universe_pos = Pos::<UniverseSpace, nebula_math::Vec3I128>::new(
+            nebula_math::Vec3I128::new(5_000_000, 10_000_000, 15_000_000),
+        );
+
+        let planet_origin = SectorCoord {
+            sector: SectorIndex { x: 0, y: 0, z: 0 },
+            offset: SectorOffset { x: 0, y: 0, z: 0 },
+        };
+
+        let composed = UniverseToSector.then(SectorToPlanet { planet_origin });
+        let planet_pos = composed.apply(&universe_pos);
+
+        // For composed inverse, we need to create the inverse manually
+        let inverse_composed = PlanetToSector { planet_origin }.then(SectorToUniverse);
+        let roundtrip = inverse_composed.apply(&planet_pos);
+
+        assert_eq!(universe_pos.value, roundtrip.value);
+    }
+
+    #[test]
+    fn test_camera_transition_produces_f32() {
+        let chunk_pos = Pos::<ChunkSpace, UVec3>::new(UVec3::new(1000, 2000, 3000));
+        let chunk_to_local = ChunkToLocal {
+            chunk_origin_in_camera: Vec3::new(10.0, 20.0, 30.0),
+        };
+
+        let local_pos = chunk_to_local.apply(&chunk_pos);
+
+        // 1000mm = 1m, 2000mm = 2m, 3000mm = 3m
+        // Plus camera origin offset
+        let expected = Vec3::new(11.0, 22.0, 33.0);
+
+        assert!((local_pos.value.x - expected.x).abs() < f32::EPSILON);
+        assert!((local_pos.value.y - expected.y).abs() < f32::EPSILON);
+        assert!((local_pos.value.z - expected.z).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_then_is_associative() {
+        let universe_pos = Pos::<UniverseSpace, nebula_math::Vec3I128>::new(
+            nebula_math::Vec3I128::new(100_000, 200_000, 300_000),
+        );
+
+        let planet_origin = SectorCoord {
+            sector: SectorIndex { x: 0, y: 0, z: 0 },
+            offset: SectorOffset { x: 0, y: 0, z: 0 },
+        };
+        let chunk_origin = Vec3I64::new(0, 0, 0);
+
+        let a = UniverseToSector;
+        let b = SectorToPlanet { planet_origin };
+        let c = PlanetToChunk { chunk_origin };
+
+        // (A.then(B)).then(C)
+        let left_assoc = a.then(b).then(c);
+        let result1 = left_assoc.apply(&universe_pos);
+
+        // A.then(B.then(C))
+        let right_assoc = UniverseToSector
+            .then(SectorToPlanet { planet_origin }.then(PlanetToChunk { chunk_origin }));
+        let result2 = right_assoc.apply(&universe_pos);
+
+        assert_eq!(result1.value, result2.value);
+    }
+
+    #[test]
+    fn test_universe_to_local_direct() {
+        let universe_pos = Pos::<UniverseSpace, nebula_math::Vec3I128>::new(
+            nebula_math::Vec3I128::new(50_000, 100_000, 150_000),
+        );
+        let camera_pos = nebula_math::Vec3I128::new(10_000, 20_000, 30_000);
+
+        let universe_to_local = UniverseToLocal { camera_pos };
+        let local_pos = universe_to_local.apply(&universe_pos);
+
+        // Expected delta: (40_000, 80_000, 120_000) mm = (40, 80, 120) m
+        assert!((local_pos.value.x - 40.0).abs() < 1e-4);
+        assert!((local_pos.value.y - 80.0).abs() < 1e-4);
+        assert!((local_pos.value.z - 120.0).abs() < 1e-4);
     }
 }
