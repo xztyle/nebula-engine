@@ -1,5 +1,6 @@
 //! Cube-sphere geometry: cube-to-sphere projection, face quadtree subdivision, and UV mapping.
 
+mod bounds;
 mod chunk_address;
 mod corner;
 mod cross_face;
@@ -10,6 +11,7 @@ mod neighbor;
 mod projection;
 mod quadtree;
 
+pub use bounds::{BoundingSphere, ChunkAABB, WorldAABB, WorldBoundingSphere};
 pub use chunk_address::ChunkAddress;
 pub use corner::{
     CornerNeighbors, CubeCorner, FaceCorner, corner_chunk_on_face, corner_lod_valid,
