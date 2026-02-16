@@ -32,6 +32,12 @@ pub struct ShipConfig {
     pub mouse_sensitivity: f64,
     /// Roll speed in radians per second when Q/E are held.
     pub roll_speed: f64,
+    /// Planet radius in meters (for gravity and landing calculations).
+    pub planet_radius_m: f64,
+    /// Surface gravity in m/s² (applied at planet surface, decreases with altitude).
+    pub surface_gravity: f64,
+    /// Gravity well altitude in meters (gravity only applies below this).
+    pub gravity_well_altitude: f64,
 }
 
 impl Default for ShipConfig {
@@ -46,6 +52,9 @@ impl Default for ShipConfig {
             mass: 1000.0,
             mouse_sensitivity: 0.003,
             roll_speed: 1.5,
+            planet_radius_m: 6_371_000.0,
+            surface_gravity: 9.81,
+            gravity_well_altitude: 1_000_000.0,
         }
     }
 }
@@ -62,6 +71,10 @@ pub struct ShipState {
     pub orientation: DQuat,
     /// Angular velocity (pitch, yaw, roll) in radians per second, ship-local frame.
     pub angular_velocity: DVec3,
+    /// Whether the ship is currently landed on the planet surface.
+    pub landed: bool,
+    /// Vertical speed relative to planet surface (positive = climbing, m/s).
+    pub vertical_speed: f64,
 }
 
 impl ShipState {
@@ -73,6 +86,8 @@ impl ShipState {
             velocity: DVec3::ZERO,
             orientation: DQuat::IDENTITY,
             angular_velocity: DVec3::ZERO,
+            landed: false,
+            vertical_speed: 0.0,
         }
     }
 
@@ -86,6 +101,8 @@ impl ShipState {
             velocity: DVec3::ZERO,
             orientation,
             angular_velocity: DVec3::ZERO,
+            landed: false,
+            vertical_speed: 0.0,
         }
     }
 
@@ -191,12 +208,55 @@ pub fn update_ship(
     let acceleration = thrust_world / config.mass;
     ship.velocity += acceleration * dt;
 
-    // --- Linear damping ---
-    let damping_factor = (1.0 - config.linear_damping * dt).max(0.0);
+    // --- Planetary gravity ---
+    let dist = ship.position.length();
+    let altitude = dist - config.planet_radius_m;
+    if altitude < config.gravity_well_altitude && dist > 0.0 {
+        // g = g_surface * (R / r)² where r = distance from center
+        let r = dist.max(config.planet_radius_m);
+        let g = config.surface_gravity * (config.planet_radius_m / r).powi(2);
+        let gravity_dir = -ship.position.normalize();
+        ship.velocity += gravity_dir * g * dt;
+    }
+
+    // --- Linear damping (increased near surface for easier landing) ---
+    let extra_damping = if altitude < 10_000.0 { 0.2 } else { 0.0 };
+    let damping_factor = (1.0 - (config.linear_damping + extra_damping) * dt).max(0.0);
     ship.velocity *= damping_factor;
+
+    // --- Auto-brake below 100m if descending too fast ---
+    if altitude < 100.0 && altitude > 0.0 && dist > 0.0 {
+        let radial_dir = ship.position.normalize();
+        let radial_vel = ship.velocity.dot(radial_dir);
+        // If descending faster than 20 m/s, apply retro-braking
+        if radial_vel < -20.0 {
+            let brake = radial_dir * (radial_vel + 20.0) * 0.5;
+            ship.velocity -= brake * dt;
+        }
+    }
 
     // --- Integrate position ---
     ship.position += ship.velocity * dt;
+
+    // --- Landing detection ---
+    let new_dist = ship.position.length();
+    if new_dist <= config.planet_radius_m && new_dist > 0.0 {
+        // Clamp to surface
+        ship.position = ship.position.normalize() * config.planet_radius_m;
+        ship.velocity = DVec3::ZERO;
+        ship.landed = true;
+    } else if ship.landed && new_dist > config.planet_radius_m {
+        ship.landed = false;
+    }
+
+    // --- Vertical speed (radial component of velocity) ---
+    let current_dist = ship.position.length();
+    if current_dist > 0.0 {
+        let radial_dir = ship.position.normalize();
+        ship.vertical_speed = ship.velocity.dot(radial_dir);
+    } else {
+        ship.vertical_speed = 0.0;
+    }
 }
 
 /// Sync the camera to follow the ship (first-person: camera at ship position).
@@ -237,9 +297,10 @@ mod tests {
     fn test_no_input_no_acceleration() {
         let config = ShipConfig {
             linear_damping: 0.0,
+            gravity_well_altitude: 0.0, // disable gravity for this test
             ..ShipConfig::default()
         };
-        let mut ship = ShipState::new(DVec3::ZERO);
+        let mut ship = ShipState::new(DVec3::new(0.0, 10_000_000.0, 0.0));
         ship.velocity = DVec3::new(100.0, 0.0, 0.0);
         let initial_speed = ship.speed();
 
@@ -291,9 +352,10 @@ mod tests {
     fn test_damping_slows_ship() {
         let config = ShipConfig {
             linear_damping: 1.0,
+            gravity_well_altitude: 0.0,
             ..ShipConfig::default()
         };
-        let mut ship = ShipState::new(DVec3::ZERO);
+        let mut ship = ShipState::new(DVec3::new(0.0, 10_000_000.0, 0.0));
         ship.velocity = DVec3::new(100.0, 0.0, 0.0);
 
         for _ in 0..600 {
@@ -317,9 +379,10 @@ mod tests {
     fn test_position_integrates_from_velocity() {
         let config = ShipConfig {
             linear_damping: 0.0,
+            gravity_well_altitude: 0.0, // disable gravity for this test
             ..ShipConfig::default()
         };
-        let mut ship = ShipState::new(DVec3::ZERO);
+        let mut ship = ShipState::new(DVec3::new(0.0, 10_000_000.0, 0.0));
         ship.velocity = DVec3::new(60.0, 0.0, 0.0);
 
         // 60 ticks at 1/60s = 1 second, velocity 60 m/s = 60m traveled
@@ -335,7 +398,7 @@ mod tests {
 
         assert!(
             (ship.position.x - 60.0).abs() < 1.0,
-            "Expected ~60m, got {}",
+            "Expected ~60m displacement, got {}",
             ship.position.x
         );
     }
@@ -347,6 +410,58 @@ mod tests {
             (ship.position.y - 6_771_000.0).abs() < 1.0,
             "Expected 6771km altitude, got {}",
             ship.position.y
+        );
+    }
+
+    #[test]
+    fn test_gravity_pulls_ship_down() {
+        let config = ShipConfig::default();
+        // Ship 100km above surface, stationary
+        let mut ship = ShipState::new(DVec3::new(0.0, 6_471_000.0, 0.0));
+
+        for _ in 0..60 {
+            update_ship(
+                &mut ship,
+                &config,
+                1.0 / 60.0,
+                &default_kb(),
+                &default_mouse(),
+            );
+        }
+
+        // Should have gained downward velocity from gravity
+        assert!(
+            ship.velocity.y < -1.0,
+            "Ship should be falling, vy={}",
+            ship.velocity.y
+        );
+    }
+
+    #[test]
+    fn test_landing_clamps_to_surface() {
+        let config = ShipConfig::default();
+        // Ship just above surface, falling fast
+        let mut ship = ShipState::new(DVec3::new(0.0, 6_371_010.0, 0.0));
+        ship.velocity = DVec3::new(0.0, -1000.0, 0.0);
+
+        for _ in 0..60 {
+            update_ship(
+                &mut ship,
+                &config,
+                1.0 / 60.0,
+                &default_kb(),
+                &default_mouse(),
+            );
+        }
+
+        assert!(ship.landed, "Ship should be landed");
+        assert!(
+            (ship.position.length() - config.planet_radius_m).abs() < 1.0,
+            "Ship should be at surface"
+        );
+        assert!(
+            ship.velocity.length() < 0.01,
+            "Velocity should be zero on landing"
         );
     }
 }

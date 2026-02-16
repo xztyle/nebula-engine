@@ -31,6 +31,12 @@ pub struct HudState {
     frame_time_ema: f64,
     /// Previous transition mode for logging state changes.
     prev_transition_mode: &'static str,
+    /// Whether the ship is landed on the surface.
+    pub landed: bool,
+    /// Whether the ship is in landing mode (altitude < 1 km).
+    pub landing_mode: bool,
+    /// Vertical speed in m/s (positive = climbing).
+    pub vertical_speed: f64,
 }
 
 impl Default for HudState {
@@ -46,6 +52,9 @@ impl Default for HudState {
             last_frame: Instant::now(),
             frame_time_ema: 1.0 / 60.0,
             prev_transition_mode: "Orbital",
+            landed: false,
+            landing_mode: false,
+            vertical_speed: 0.0,
         }
     }
 }
@@ -94,6 +103,11 @@ pub fn update_hud(
         hud.fps = 1.0 / hud.frame_time_ema;
     }
 
+    // Landing state
+    hud.landed = ship.landed;
+    hud.landing_mode = hud.altitude_m < 1_000.0 && !ship.landed;
+    hud.vertical_speed = ship.vertical_speed;
+
     // Transition state from altitude
     let transition = TransitionConfig::default();
     let (_mode, blend) = transition.classify(hud.altitude_m);
@@ -135,8 +149,19 @@ pub fn format_hud(hud: &HudState) -> String {
     let transition = hud.transition_mode;
     let blend_pct = hud.transition_blend * 100.0;
 
+    // Landing/vertical speed indicators
+    let landing_str = if hud.landed {
+        " | LANDED".to_string()
+    } else if hud.landing_mode {
+        format!(" | LANDING MODE | VS: {:.1} m/s", hud.vertical_speed)
+    } else if hud.altitude_m < 10_000.0 {
+        format!(" | VS: {:.1} m/s", hud.vertical_speed)
+    } else {
+        String::new()
+    };
+
     format!(
-        "SPD: {} m/s | ALT: {:.1} km | THR: {:.0}% | HDG: {:03.0}\u{00b0} | {transition}({blend_pct:.0}%) | FPS: {:.0}",
+        "SPD: {} m/s | ALT: {:.1} km | THR: {:.0}% | HDG: {:03.0}\u{00b0} | {transition}({blend_pct:.0}%){landing_str} | FPS: {:.0}",
         speed_str, alt_km, throttle, heading, fps,
     )
 }
@@ -166,6 +191,8 @@ mod tests {
             velocity: vel,
             orientation,
             angular_velocity: DVec3::ZERO,
+            landed: false,
+            vertical_speed: 0.0,
         }
     }
 
