@@ -1,4 +1,4 @@
-//! Six cardinal face directions for voxel geometry.
+//! Cardinal directions for voxel geometry: face (6), edge (12), and corner (8).
 
 /// One of the six cardinal directions a voxel face can point.
 ///
@@ -65,6 +65,117 @@ impl FaceDirection {
             Self::PosZ => (x, y, z + 1),
             Self::NegZ => (x, y, z - 1),
         }
+    }
+
+    /// Returns the opposite face direction.
+    pub fn opposite(self) -> Self {
+        match self {
+            Self::PosX => Self::NegX,
+            Self::NegX => Self::PosX,
+            Self::PosY => Self::NegY,
+            Self::NegY => Self::PosY,
+            Self::PosZ => Self::NegZ,
+            Self::NegZ => Self::PosZ,
+        }
+    }
+
+    /// Returns the direction index (0–5).
+    pub fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// One of 12 edge-adjacent directions (two axes out of bounds).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum EdgeDirection {
+    /// +X +Y edge.
+    PosXPosY = 0,
+    /// +X −Y edge.
+    PosXNegY = 1,
+    /// +X +Z edge.
+    PosXPosZ = 2,
+    /// +X −Z edge.
+    PosXNegZ = 3,
+    /// −X +Y edge.
+    NegXPosY = 4,
+    /// −X −Y edge.
+    NegXNegY = 5,
+    /// −X +Z edge.
+    NegXPosZ = 6,
+    /// −X −Z edge.
+    NegXNegZ = 7,
+    /// +Y +Z edge.
+    PosYPosZ = 8,
+    /// +Y −Z edge.
+    PosYNegZ = 9,
+    /// −Y +Z edge.
+    NegYPosZ = 10,
+    /// −Y −Z edge.
+    NegYNegZ = 11,
+}
+
+impl EdgeDirection {
+    /// All 12 edge directions.
+    pub const ALL: [EdgeDirection; 12] = [
+        Self::PosXPosY,
+        Self::PosXNegY,
+        Self::PosXPosZ,
+        Self::PosXNegZ,
+        Self::NegXPosY,
+        Self::NegXNegY,
+        Self::NegXPosZ,
+        Self::NegXNegZ,
+        Self::PosYPosZ,
+        Self::PosYNegZ,
+        Self::NegYPosZ,
+        Self::NegYNegZ,
+    ];
+
+    /// Returns the direction index (0–11).
+    pub fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// One of 8 corner-adjacent directions (all three axes out of bounds).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum CornerDirection {
+    /// −X −Y −Z corner.
+    NegXNegYNegZ = 0,
+    /// +X −Y −Z corner.
+    PosXNegYNegZ = 1,
+    /// −X +Y −Z corner.
+    NegXPosYNegZ = 2,
+    /// +X +Y −Z corner.
+    PosXPosYNegZ = 3,
+    /// −X −Y +Z corner.
+    NegXNegYPosZ = 4,
+    /// +X −Y +Z corner.
+    PosXNegYPosZ = 5,
+    /// −X +Y +Z corner.
+    NegXPosYPosZ = 6,
+    /// +X +Y +Z corner.
+    PosXPosYPosZ = 7,
+}
+
+impl CornerDirection {
+    /// All 8 corner directions.
+    pub const ALL: [CornerDirection; 8] = [
+        Self::NegXNegYNegZ,
+        Self::PosXNegYNegZ,
+        Self::NegXPosYNegZ,
+        Self::PosXPosYNegZ,
+        Self::NegXNegYPosZ,
+        Self::PosXNegYPosZ,
+        Self::NegXPosYPosZ,
+        Self::PosXPosYPosZ,
+    ];
+
+    /// Returns the direction index (0–7).
+    pub fn index(self) -> usize {
+        self as usize
     }
 }
 

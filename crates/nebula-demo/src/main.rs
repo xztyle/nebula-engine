@@ -11,7 +11,8 @@ use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
 use nebula_cubesphere::PlanetDef;
 use nebula_mesh::{
-    ChunkNeighborhood, compute_visible_faces, count_total_faces, count_visible_faces, greedy_mesh,
+    ChunkNeighborhood, EdgeDirection, compute_visible_faces, count_total_faces,
+    count_visible_faces, greedy_mesh,
 };
 use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
 use nebula_voxel::{
@@ -865,6 +866,59 @@ fn demonstrate_greedy_meshing() -> (usize, usize) {
     (greedy_quads, naive_quads)
 }
 
+/// Demonstrates adjacent chunk culling: faces at chunk boundaries are
+/// correctly hidden when the neighboring chunk has solid voxels.
+fn demonstrate_adjacent_chunk_culling() -> (u32, u32) {
+    info!("Starting adjacent chunk culling demonstration");
+
+    let mut registry = VoxelTypeRegistry::new();
+    let stone_id = registry
+        .register(VoxelTypeDef {
+            name: "acc_stone".to_string(),
+            solid: true,
+            transparency: Transparency::Opaque,
+            material_index: 1,
+            light_emission: 0,
+        })
+        .expect("register stone");
+
+    // Build two adjacent chunks: center is solid stone, +X neighbor is also solid.
+    // Without neighbor data, the center's +X boundary faces would be visible.
+    // With the neighbor loaded, those 32×32 = 1024 faces should be culled.
+    let center = ChunkData::new(stone_id);
+    let pos_x_neighbor = ChunkData::new(stone_id);
+
+    // Without neighbor: all boundary faces visible
+    let no_neighbor = ChunkNeighborhood::all_air();
+    let faces_without = compute_visible_faces(&center, &no_neighbor, &registry);
+    let visible_without = count_visible_faces(&faces_without);
+
+    // With +X neighbor: +X boundary faces should be culled
+    let mut with_neighbor = ChunkNeighborhood::all_air();
+    with_neighbor.set(0, pos_x_neighbor.clone()); // direction 0 = +X
+
+    // Also set up edge and corner neighbors using the new API
+    for edge in EdgeDirection::ALL {
+        with_neighbor.set_edge_neighbor(edge, &pos_x_neighbor);
+    }
+
+    let faces_with = compute_visible_faces(&center, &with_neighbor, &registry);
+    let visible_with = count_visible_faces(&faces_with);
+
+    let culled = visible_without - visible_with;
+    info!(
+        "Adjacent culling: {} visible without neighbor, {} with neighbor ({} faces culled)",
+        visible_without, visible_with, culled
+    );
+    info!(
+        "Boundary face reduction: {:.1}%",
+        culled as f64 / visible_without as f64 * 100.0
+    );
+
+    info!("Adjacent chunk culling demonstration completed successfully");
+    (visible_without, visible_with)
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -946,6 +1000,9 @@ fn main() {
     // Demonstrate greedy meshing
     let (greedy_quads, naive_quads) = demonstrate_greedy_meshing();
 
+    // Demonstrate adjacent chunk culling
+    let (faces_no_neighbor, faces_with_neighbor) = demonstrate_adjacent_chunk_culling();
+
     // Log initial state
     let mut demo_state = DemoState::new();
     let initial_sector = SectorCoord::from_world(&demo_state.position);
@@ -967,8 +1024,8 @@ fn main() {
         total_faces,
     );
     config.window.title = format!(
-        "{} - Greedy: {} quads (was {})",
-        config.window.title, greedy_quads, naive_quads
+        "{} - Greedy: {} quads (was {}) - AdjCull: {}/{}",
+        config.window.title, greedy_quads, naive_quads, faces_with_neighbor, faces_no_neighbor
     );
 
     info!(

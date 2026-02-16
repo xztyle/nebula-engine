@@ -8,8 +8,10 @@ pub mod visibility;
 pub mod visible_faces;
 
 pub use chunk_mesh::{ChunkMesh, MeshVertex, QuadInfo};
-pub use face_direction::FaceDirection;
+pub use face_direction::{CornerDirection, EdgeDirection, FaceDirection};
 pub use greedy::greedy_mesh;
-pub use neighborhood::ChunkNeighborhood;
+pub use neighborhood::{
+    ChunkBoundaryEdge, ChunkBoundarySlice, ChunkNeighborhood, extract_boundary_slice,
+};
 pub use visibility::{compute_visible_faces, count_total_faces, count_visible_faces};
 pub use visible_faces::VisibleFaces;
