@@ -9,6 +9,7 @@ pub mod physics_island;
 pub mod player_physics;
 pub mod voxel_collision;
 pub mod voxel_raycast;
+pub mod zero_gravity;
 
 pub use gravity::{
     GravityResult, GravitySource, LocalGravity, apply_gravity_forces_system, compute_gravity,
@@ -32,6 +33,10 @@ pub use voxel_collision::{
 };
 pub use voxel_raycast::{
     BlockTarget, VoxelData, VoxelRay, VoxelRaycastHit, VoxelWorldAccess, voxel_raycast,
+};
+pub use zero_gravity::{
+    SpaceObject, ThrustInput, ZERO_G_THRESHOLD, apply_thrust_system,
+    configure_space_damping_system, get_angular_velocity, is_zero_gravity,
 };
 
 use bevy_ecs::prelude::*;

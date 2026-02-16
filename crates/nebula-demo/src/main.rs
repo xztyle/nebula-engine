@@ -2792,6 +2792,96 @@ fn demonstrate_voxel_raycast() {
     info!("Voxel raycasting demonstration completed successfully");
 }
 
+/// Demonstrates zero-gravity physics: flying away from a planet enters zero-g, free float.
+fn demonstrate_zero_gravity() {
+    use nebula_physics::{
+        GravitySource, LocalGravity, PhysicsWorld, RigidBodyHandle, ZERO_G_THRESHOLD,
+        compute_gravity, get_angular_velocity, is_zero_gravity,
+    };
+
+    info!("Starting zero-gravity physics demonstration");
+
+    // Set up a planet with limited influence radius.
+    let planet_pos = WorldPosition::new(0, 0, 0);
+    let planet_source = GravitySource {
+        mass: 5.972e24,
+        surface_gravity: 9.81,
+        surface_radius: 6_371_000.0,
+        influence_radius: 10_000_000.0,
+        constant_near_surface: true,
+        atmosphere_height: 100_000.0,
+    };
+    let sources = vec![(planet_pos, &planet_source)];
+
+    // Entity on the surface: should have gravity
+    let surface_pos = WorldPosition::new(0, 6_371_100, 0);
+    let surface_grav = compute_gravity(&surface_pos, &sources);
+    let surface_local = LocalGravity {
+        direction: surface_grav.direction,
+        magnitude: surface_grav.magnitude,
+    };
+    assert!(
+        !is_zero_gravity(&surface_local),
+        "Surface should not be zero-g"
+    );
+    info!(
+        "  On surface: gravity={:.3} m/s², zero-g={}",
+        surface_local.magnitude,
+        is_zero_gravity(&surface_local)
+    );
+
+    // Entity far from planet: should be zero-g
+    let space_pos = WorldPosition::new(0, 50_000_000, 0);
+    let space_grav = compute_gravity(&space_pos, &sources);
+    let space_local = LocalGravity {
+        direction: space_grav.direction,
+        magnitude: space_grav.magnitude,
+    };
+    assert!(is_zero_gravity(&space_local), "Deep space should be zero-g");
+    info!(
+        "  In deep space: gravity={:.6} m/s², zero-g={}",
+        space_local.magnitude,
+        is_zero_gravity(&space_local)
+    );
+
+    // Verify Newtonian behavior: object with zero damping maintains velocity
+    let mut physics = PhysicsWorld::new();
+    physics.set_gravity(0.0, 0.0, 0.0);
+    let body = rapier3d::prelude::RigidBodyBuilder::dynamic()
+        .translation(rapier3d::prelude::Vector::new(0.0, 0.0, 0.0))
+        .linvel(rapier3d::prelude::Vector::new(5.0, 0.0, 0.0))
+        .linear_damping(0.0)
+        .angular_damping(0.0)
+        .build();
+    let handle = physics.rigid_body_set.insert(body);
+    let collider = rapier3d::prelude::ColliderBuilder::ball(0.5).build();
+    physics
+        .collider_set
+        .insert_with_parent(collider, handle, &mut physics.rigid_body_set);
+
+    for _ in 0..60 {
+        physics.step();
+    }
+    let pos = physics.rigid_body_set[handle].translation();
+    info!(
+        "  Free float: started at x=0, after 1s at x={:.2} (expected ~5.0)",
+        pos.x
+    );
+    assert!(
+        (pos.x - 5.0).abs() < 0.5,
+        "Free-float object should travel ~5m in 1s"
+    );
+
+    // Verify angular velocity query
+    let rb_handle = RigidBodyHandle(handle);
+    let av = get_angular_velocity(&physics, &rb_handle);
+    assert!(av.is_some(), "Should be able to query angular velocity");
+    info!("  Angular velocity: {:?}", av.unwrap());
+
+    info!("  ZERO_G_THRESHOLD = {} m/s²", ZERO_G_THRESHOLD);
+    info!("Zero-gravity physics demonstration completed successfully");
+}
+
 /// Configure system ordering constraints for all engine stages.
 fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
@@ -3084,6 +3174,9 @@ fn main() {
     // Demonstrate gravity sources
     demonstrate_gravity_sources();
 
+    // Demonstrate zero-gravity physics
+    demonstrate_zero_gravity();
+
     // Demonstrate voxel raycasting
     demonstrate_voxel_raycast();
 
@@ -3128,6 +3221,18 @@ fn main() {
         nebula_physics::apply_gravity_forces_system
             .in_set(nebula_ecs::FixedUpdateSet::ForceApplication)
             .after(nebula_physics::gravity_update_system),
+    );
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::FixedUpdate,
+        nebula_physics::configure_space_damping_system
+            .in_set(nebula_ecs::FixedUpdateSet::ForceApplication)
+            .after(nebula_physics::gravity_update_system),
+    );
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::FixedUpdate,
+        nebula_physics::apply_thrust_system
+            .in_set(nebula_ecs::FixedUpdateSet::ForceApplication)
+            .after(nebula_physics::configure_space_damping_system),
     );
     ecs_schedules.add_system(
         nebula_ecs::EngineSchedule::FixedUpdate,
