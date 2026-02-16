@@ -203,9 +203,7 @@ impl AuthoritativeWorld {
         let world_ptr = &self.world as *const World as *mut World;
         unsafe {
             let mut query = (*world_ptr).query::<&PlayerState>();
-            query
-                .iter(&*world_ptr)
-                .find(|ps| ps.player_id == player_id)
+            query.iter(&*world_ptr).find(|ps| ps.player_id == player_id)
         }
     }
 
