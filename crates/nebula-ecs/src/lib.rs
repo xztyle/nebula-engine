@@ -11,6 +11,7 @@ mod input;
 mod lifecycle;
 mod render_context;
 mod schedule;
+mod system_ordering;
 mod systems;
 mod time;
 mod voxel_registry;
@@ -26,6 +27,12 @@ pub use input::InputState;
 pub use lifecycle::{DespawnQueue, SpawnQueue, despawn_entity, flush_entity_queues, spawn_entity};
 pub use render_context::RenderContext;
 pub use schedule::{EngineSchedule, EngineSchedules};
+pub use system_ordering::{
+    FixedUpdateSet, PostUpdateSet, PreRenderSet, PreUpdateSet, RenderSet, UpdateSet,
+    configure_fixedupdate_ordering, configure_postupdate_ordering, configure_prerender_ordering,
+    configure_preupdate_ordering, configure_render_ordering, configure_update_ordering,
+    validate_schedules,
+};
 pub use systems::update_local_positions;
 pub use time::TimeRes;
 pub use voxel_registry::{VoxelRegistry, VoxelTypeEntry};

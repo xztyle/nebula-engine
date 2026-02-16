@@ -101,6 +101,25 @@ impl EngineSchedules {
         self.fixed_dt
     }
 
+    /// Returns a mutable reference to the schedule for a given stage.
+    ///
+    /// Useful for configuring system sets and ordering constraints.
+    pub fn get_schedule_mut(&mut self, stage: &EngineSchedule) -> Option<&mut Schedule> {
+        self.schedules
+            .iter_mut()
+            .find(|(label, _)| label == stage)
+            .map(|(_, schedule)| schedule)
+    }
+
+    /// Force-initialize all schedules, validating the dependency graph.
+    ///
+    /// Panics with a descriptive error if any cycle is detected.
+    pub fn initialize_all(&mut self, world: &mut World) {
+        for (_label, schedule) in &mut self.schedules {
+            let _ = schedule.initialize(world);
+        }
+    }
+
     fn run_stage(&mut self, target: EngineSchedule, world: &mut World) {
         for (label, schedule) in &mut self.schedules {
             if *label == target {

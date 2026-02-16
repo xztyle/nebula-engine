@@ -6,6 +6,7 @@
 
 mod cubesphere_demos;
 
+use bevy_ecs::prelude::IntoSystemConfigs;
 use clap::Parser;
 use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
@@ -1306,6 +1307,28 @@ fn demonstrate_mesh_invalidation() -> (usize, usize, usize) {
     )
 }
 
+/// Configure system ordering constraints for all engine stages.
+fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
+    if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
+        nebula_ecs::configure_preupdate_ordering(s);
+    }
+    if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::FixedUpdate) {
+        nebula_ecs::configure_fixedupdate_ordering(s);
+    }
+    if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::Update) {
+        nebula_ecs::configure_update_ordering(s);
+    }
+    if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PostUpdate) {
+        nebula_ecs::configure_postupdate_ordering(s);
+    }
+    if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreRender) {
+        nebula_ecs::configure_prerender_ordering(s);
+    }
+    if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::Render) {
+        nebula_ecs::configure_render_ordering(s);
+    }
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -1412,10 +1435,24 @@ fn main() {
     ecs_world.insert_resource(nebula_ecs::DespawnQueue::default());
     let mut ecs_schedules = nebula_ecs::EngineSchedules::new();
 
-    // Register stage-logging systems so the console shows execution order
-    ecs_schedules.add_system(nebula_ecs::EngineSchedule::PreUpdate, || {
-        tracing::debug!("Stage: PreUpdate");
-    });
+    // Configure system ordering constraints for all stages
+    configure_system_ordering(&mut ecs_schedules);
+
+    // Register stage-logging systems into their respective system sets
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::PreUpdate,
+        (|| {
+            tracing::debug!("Stage: PreUpdate/Time");
+        })
+        .in_set(nebula_ecs::PreUpdateSet::Time),
+    );
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::PreUpdate,
+        (|| {
+            tracing::debug!("Stage: PreUpdate/Input");
+        })
+        .in_set(nebula_ecs::PreUpdateSet::Input),
+    );
     ecs_schedules.add_system(nebula_ecs::EngineSchedule::FixedUpdate, || {
         tracing::debug!("Stage: FixedUpdate");
     });
@@ -1424,25 +1461,50 @@ fn main() {
     });
     ecs_schedules.add_system(
         nebula_ecs::EngineSchedule::PostUpdate,
-        nebula_ecs::flush_entity_queues,
+        nebula_ecs::flush_entity_queues.in_set(nebula_ecs::PostUpdateSet::TransformPropagation),
     );
     ecs_schedules.add_system(
         nebula_ecs::EngineSchedule::PostUpdate,
-        nebula_ecs::update_local_positions_incremental,
+        nebula_ecs::update_local_positions_incremental
+            .in_set(nebula_ecs::PostUpdateSet::TransformPropagation),
     );
     ecs_schedules.add_system(
         nebula_ecs::EngineSchedule::PostUpdate,
-        nebula_ecs::update_all_local_positions_on_camera_move,
+        nebula_ecs::update_all_local_positions_on_camera_move
+            .in_set(nebula_ecs::PostUpdateSet::TransformPropagation),
     );
-    ecs_schedules.add_system(nebula_ecs::EngineSchedule::PostUpdate, || {
-        tracing::debug!("Stage: PostUpdate");
-    });
-    ecs_schedules.add_system(nebula_ecs::EngineSchedule::PreRender, || {
-        tracing::debug!("Stage: PreRender");
-    });
-    ecs_schedules.add_system(nebula_ecs::EngineSchedule::Render, || {
-        tracing::debug!("Stage: Render");
-    });
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::PostUpdate,
+        (|| {
+            tracing::debug!("Stage: PostUpdate/SpatialIndex");
+        })
+        .in_set(nebula_ecs::PostUpdateSet::SpatialIndexUpdate),
+    );
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::PreRender,
+        (|| {
+            tracing::debug!("Stage: PreRender/Culling");
+        })
+        .in_set(nebula_ecs::PreRenderSet::Culling),
+    );
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::PreRender,
+        (|| {
+            tracing::debug!("Stage: PreRender/Batching");
+        })
+        .in_set(nebula_ecs::PreRenderSet::Batching),
+    );
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::Render,
+        (|| {
+            tracing::debug!("Stage: Render/Draw");
+        })
+        .in_set(nebula_ecs::RenderSet::Draw),
+    );
+
+    // Validate all schedule dependency graphs at startup
+    nebula_ecs::validate_schedules(&mut ecs_schedules, &mut ecs_world);
+    info!("System ordering: all schedule graphs validated (no cycles)");
 
     // Spawn chunk entities using the entity lifecycle API
     let mut chunk_entities = Vec::new();
