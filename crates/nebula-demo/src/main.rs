@@ -11,6 +11,7 @@ use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
 use nebula_cubesphere::PlanetDef;
 use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
+use nebula_voxel::{Transparency, VoxelTypeDef, VoxelTypeRegistry};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use tracing::info;
@@ -286,6 +287,58 @@ fn demonstrate_draw_call_batching() {
     info!("Draw call batching demonstration completed successfully");
 }
 
+/// Demonstrates the voxel type registry by registering a small palette.
+fn demonstrate_voxel_registry() -> usize {
+    info!("Starting voxel type registry demonstration");
+
+    let mut registry = VoxelTypeRegistry::new();
+
+    let stone = VoxelTypeDef {
+        name: "stone".to_string(),
+        solid: true,
+        transparency: Transparency::Opaque,
+        material_index: 1,
+        light_emission: 0,
+    };
+    let dirt = VoxelTypeDef {
+        name: "dirt".to_string(),
+        solid: true,
+        transparency: Transparency::Opaque,
+        material_index: 2,
+        light_emission: 0,
+    };
+    let grass = VoxelTypeDef {
+        name: "grass".to_string(),
+        solid: true,
+        transparency: Transparency::Opaque,
+        material_index: 3,
+        light_emission: 0,
+    };
+
+    registry.register(stone).expect("failed to register stone");
+    registry.register(dirt).expect("failed to register dirt");
+    registry.register(grass).expect("failed to register grass");
+
+    let count = registry.len();
+    info!("Registry: {} types", count);
+
+    // Verify air is ID 0
+    let air = registry.get(nebula_voxel::VoxelTypeId(0));
+    info!("  ID 0: {} (solid={})", air.name, air.solid);
+
+    // Verify name lookup
+    if let Some(stone_id) = registry.lookup_by_name("stone") {
+        let stone_def = registry.get(stone_id);
+        info!(
+            "  Lookup 'stone': ID {} (solid={})",
+            stone_id.0, stone_def.solid
+        );
+    }
+
+    info!("Voxel type registry demonstration completed successfully");
+    count
+}
+
 /// Demonstrates cube-to-sphere projection by projecting points on each face
 /// and verifying the sphere is well-formed.
 fn main() {
@@ -336,6 +389,9 @@ fn main() {
     // Demonstrate planet definition and registry
     cubesphere_demos::demonstrate_planet_definition();
 
+    // Demonstrate voxel type registry
+    let voxel_type_count = demonstrate_voxel_registry();
+
     // Log initial state
     let mut demo_state = DemoState::new();
     let initial_sector = SectorCoord::from_world(&demo_state.position);
@@ -343,8 +399,8 @@ fn main() {
     // Update window title to show planet info and nearby count
     let terra = PlanetDef::earth_like("Terra", WorldPosition::default(), 42);
     config.window.title = format!(
-        "Nebula Engine - Planet: {}, radius={} mm - Nearby: {} entities",
-        terra.name, terra.radius, demo_state.nearby_count
+        "Nebula Engine - Planet: {}, radius={} mm - Registry: {} types - Nearby: {} entities",
+        terra.name, terra.radius, voxel_type_count, demo_state.nearby_count
     );
 
     info!(
