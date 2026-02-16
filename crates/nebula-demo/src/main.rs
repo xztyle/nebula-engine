@@ -3040,6 +3040,35 @@ fn demonstrate_message_routing() {
     info!("Message routing demonstration completed successfully");
 }
 
+fn demonstrate_connection_lifecycle() {
+    info!("Starting connection lifecycle demonstration");
+
+    // Log the lifecycle states available
+    let states = [
+        nebula_net::SessionState::Authenticating,
+        nebula_net::SessionState::Playing,
+        nebula_net::SessionState::Disconnecting,
+        nebula_net::SessionState::Removed,
+    ];
+    for state in &states {
+        info!("  Lifecycle state: {:?}", state);
+    }
+
+    // Demonstrate SessionManager creation
+    let _sm = nebula_net::SessionManager::new();
+    info!("SessionManager created for tracking player sessions");
+
+    // Log simulated lifecycle events
+    info!("Client 1 connected -> Authenticating");
+    info!("Client 1 authenticated as player_id=1 -> Playing");
+    info!("Client 2 connected -> Authenticating");
+    info!("Client 2 authenticated as player_id=2 -> Playing");
+    info!("Client 1 disconnected -> Removed");
+    info!("Client 2 disconnected -> Removed");
+
+    info!("Connection lifecycle demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -3543,6 +3572,9 @@ fn main() {
 
     // Demonstrate message routing table
     demonstrate_message_routing();
+
+    // Demonstrate connection lifecycle
+    demonstrate_connection_lifecycle();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {

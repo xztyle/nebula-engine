@@ -3,6 +3,7 @@
 pub mod framing;
 pub mod messages;
 pub mod routing;
+pub mod session;
 pub mod tcp_client;
 pub mod tcp_server;
 
@@ -16,6 +17,7 @@ pub use routing::{
     HandlerContext, IncomingMessage, MessageHandler, MessageRouter, MessageTag, message_channel,
     process_incoming_messages,
 };
+pub use session::{AuthError, PlayerSession, SessionManager, SessionState, timeout_check};
 pub use tcp_client::{ConnectionState, ConnectionStateWatch, GameClient};
 pub use tcp_server::{
     ConnectionId, ConnectionLimitReached, ConnectionMap, GameServer, IdGenerator, ServerConfig,
