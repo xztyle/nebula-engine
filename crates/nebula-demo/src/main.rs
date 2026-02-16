@@ -1148,8 +1148,8 @@ fn demonstrate_async_meshing() -> (usize, usize) {
 fn demonstrate_cubesphere_displacement() -> (usize, f64, f64) {
     use nebula_cubesphere::{ChunkAddress as CsChunkAddress, CubeFace};
     use nebula_mesh::{
-        ChunkVertex, FaceDirection, PackedChunkMesh, PlanetParams,
-        displace_to_cubesphere, displace_vertex,
+        ChunkVertex, FaceDirection, PackedChunkMesh, PlanetParams, displace_to_cubesphere,
+        displace_vertex,
     };
 
     info!("Starting cubesphere vertex displacement demonstration");

@@ -7,6 +7,7 @@ pub mod displacement;
 pub mod face_direction;
 pub mod greedy;
 pub mod invalidation;
+pub mod lod_stitching;
 pub mod neighborhood;
 pub mod packed;
 pub mod visibility;
@@ -26,3 +27,6 @@ pub use visible_faces::VisibleFaces;
 pub use async_mesh::{MeshingPipeline, MeshingResult, MeshingTask};
 pub use displacement::{DisplacementBuffer, PlanetParams, displace_to_cubesphere, displace_vertex};
 pub use invalidation::{ChunkMeshState, MeshInvalidator};
+pub use lod_stitching::{
+    LodContext, apply_lod_stitching, generate_transition_strip, snap_edge_vertices,
+};
