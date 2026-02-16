@@ -12,3 +12,4 @@ wgpu = { workspace = true }
 log = { workspace = true }
 bytemuck = { workspace = true }
 noise = { workspace = true }
+nebula-render = { path = "../nebula-render" }

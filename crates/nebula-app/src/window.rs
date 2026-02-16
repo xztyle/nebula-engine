@@ -25,7 +25,8 @@ use nebula_render::{
     init_render_context_blocking,
 };
 use nebula_space::{
-    NebulaConfig, NebulaGenerator, SkyboxRenderer, StarfieldCubemap, StarfieldGenerator,
+    NebulaConfig, NebulaGenerator, SkyboxRenderer, StarType, StarfieldCubemap, StarfieldGenerator,
+    SunProperties, SunRenderer,
 };
 use tracing::{error, info, instrument, warn};
 use winit::application::ApplicationHandler;
@@ -158,6 +159,8 @@ pub struct AppState {
     pub skybox_renderer: Option<SkyboxRenderer>,
     /// Bloom post-processing pipeline for HDR star rendering.
     pub bloom_pipeline: Option<BloomPipeline>,
+    /// Sun corona renderer (billboard with animated HDR corona).
+    pub sun_renderer: Option<SunRenderer>,
 }
 
 impl AppState {
@@ -214,6 +217,7 @@ impl AppState {
             impostor_config: ImpostorConfig::default(),
             skybox_renderer: None,
             bloom_pipeline: None,
+            sun_renderer: None,
         }
     }
 
@@ -277,6 +281,7 @@ impl AppState {
             impostor_config: ImpostorConfig::default(),
             skybox_renderer: None,
             bloom_pipeline: None,
+            sun_renderer: None,
         }
     }
 
@@ -527,6 +532,10 @@ impl AppState {
             &starfield_cubemap,
         );
         self.skybox_renderer = Some(skybox);
+
+        // --- Sun corona renderer (billboard in HDR space) ---
+        let sun = SunRenderer::new(&gpu.device, hdr_format);
+        self.sun_renderer = Some(sun);
 
         // --- Ocean surface renderer ---
         self.initialize_ocean_renderer(gpu, planet_radius);
@@ -1038,6 +1047,48 @@ impl ApplicationHandler for AppState {
                                     let mut pass =
                                         frame_encoder.begin_render_pass_to(&pb, bloom.hdr_view());
                                     skybox.render(&mut pass);
+                                }
+
+                                // Render sun corona to HDR (additive, after skybox)
+                                if let Some(sun_renderer) = &self.sun_renderer {
+                                    let sun_dir = self.day_night.sun_direction;
+                                    let sun_props = SunProperties {
+                                        direction: sun_dir,
+                                        physical_diameter: 1_392_700.0,
+                                        distance: 149_597_870.0,
+                                        star_type: StarType::G,
+                                        luminosity: 1.0,
+                                    };
+
+                                    // Build a Camera struct matching the skybox view
+                                    let cam_forward = forward;
+                                    let cam_right = right;
+                                    let cam_up = up;
+                                    let rot_mat =
+                                        glam::Mat3::from_cols(cam_right, cam_up, -cam_forward);
+                                    let cam_rotation = glam::Quat::from_mat3(&rot_mat);
+                                    let sky_camera = Camera {
+                                        position: glam::Vec3::ZERO,
+                                        rotation: cam_rotation,
+                                        ..Camera::default()
+                                    };
+
+                                    sun_renderer.update(
+                                        &gpu.queue,
+                                        vp_rot,
+                                        &sky_camera,
+                                        &sun_props,
+                                        self.camera_time as f32,
+                                    );
+
+                                    let sun_pb = RenderPassBuilder::new()
+                                        .preserve_color()
+                                        .label("sun-corona-hdr-pass");
+                                    {
+                                        let mut sun_pass = frame_encoder
+                                            .begin_render_pass_to(&sun_pb, bloom.hdr_view());
+                                        sun_renderer.render(&mut sun_pass);
+                                    }
                                 }
 
                                 // Run bloom: extract → blur → tonemap → composite
