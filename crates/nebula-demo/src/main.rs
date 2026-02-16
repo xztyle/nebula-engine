@@ -7,6 +7,7 @@
 use clap::Parser;
 use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
+use nebula_cubesphere::{CubeFace, FaceCoord, face_coord_to_sphere_everitt};
 use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
@@ -283,6 +284,38 @@ fn demonstrate_draw_call_batching() {
     info!("Draw call batching demonstration completed successfully");
 }
 
+/// Demonstrates cube-to-sphere projection by projecting points on each face
+/// and verifying the sphere is well-formed.
+fn demonstrate_cubesphere_projection() {
+    info!("Starting cubesphere projection demonstration");
+
+    let subdivisions = 8;
+    let mut total_points = 0;
+    let mut max_deviation: f64 = 0.0;
+
+    for face in CubeFace::ALL {
+        for u_step in 0..=subdivisions {
+            for v_step in 0..=subdivisions {
+                let u = u_step as f64 / subdivisions as f64;
+                let v = v_step as f64 / subdivisions as f64;
+                let fc = FaceCoord::new(face, u, v);
+                let sphere_pt = face_coord_to_sphere_everitt(&fc);
+                let deviation = (sphere_pt.length() - 1.0).abs();
+                if deviation > max_deviation {
+                    max_deviation = deviation;
+                }
+                total_points += 1;
+            }
+        }
+    }
+
+    info!(
+        "Projected {} points onto unit sphere (max deviation: {:.2e})",
+        total_points, max_deviation
+    );
+    info!("Cubesphere projection demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -312,6 +345,9 @@ fn main() {
 
     // Demonstrate draw call batching
     demonstrate_draw_call_batching();
+
+    // Demonstrate cubesphere projection
+    demonstrate_cubesphere_projection();
 
     // Log initial state
     let mut demo_state = DemoState::new();
