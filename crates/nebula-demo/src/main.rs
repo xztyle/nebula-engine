@@ -2874,7 +2874,25 @@ fn main() {
         demo_state.spatial_hash.count()
     );
 
-    nebula_app::window::run_with_config_and_update(config, move |dt: f64| {
+    nebula_app::window::run_with_config_and_input(config, move |dt, kb| {
+        use winit::keyboard::{KeyCode, PhysicalKey};
+
         demo_state.update(dt);
+
+        // WASD camera movement (5 m/s = 5_000 mm/s)
+        let speed: i128 = 5_000;
+        let dist = (speed as f64 * dt) as i128;
+        if kb.is_pressed(PhysicalKey::Code(KeyCode::KeyW)) {
+            demo_state.position.z -= dist;
+        }
+        if kb.is_pressed(PhysicalKey::Code(KeyCode::KeyS)) {
+            demo_state.position.z += dist;
+        }
+        if kb.is_pressed(PhysicalKey::Code(KeyCode::KeyA)) {
+            demo_state.position.x -= dist;
+        }
+        if kb.is_pressed(PhysicalKey::Code(KeyCode::KeyD)) {
+            demo_state.position.x += dist;
+        }
     });
 }

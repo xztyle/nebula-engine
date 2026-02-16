@@ -71,6 +71,8 @@ pub type UpdateFn = Box<dyn FnMut(f64, f64)>;
 pub type ClearColorFn = Box<dyn FnMut(u64) -> wgpu::Color>;
 /// Custom update function that gets called each simulation tick.
 pub type CustomUpdateFn = Box<dyn FnMut(f64)>;
+/// Custom update function that receives keyboard state each simulation tick.
+pub type CustomInputUpdateFn = Box<dyn FnMut(f64, &nebula_input::KeyboardState)>;
 
 /// Application state that manages the window, GPU context, and tracks surface dimensions.
 pub struct AppState {
@@ -88,6 +90,8 @@ pub struct AppState {
     pub clear_color_fn: Option<ClearColorFn>,
     /// Optional custom update function called each simulation tick.
     pub custom_update: Option<CustomUpdateFn>,
+    /// Optional custom update with keyboard state, called each simulation tick.
+    pub custom_input_update: Option<CustomInputUpdateFn>,
     /// Engine configuration.
     pub config: Config,
     /// Debug server (only in debug builds).
@@ -208,6 +212,8 @@ pub struct AppState {
     pub lighting_atmo_config: LightingAtmosphereConfig,
     /// GPU buffer for lighting context uniform.
     pub lighting_context_buffer: Option<wgpu::Buffer>,
+    /// Frame-coherent keyboard state.
+    pub keyboard_state: nebula_input::KeyboardState,
 }
 
 impl AppState {
@@ -225,6 +231,7 @@ impl AppState {
             tick_count: 0,
             clear_color_fn: None,
             custom_update: None,
+            custom_input_update: None,
             config: Config::default(),
             debug_server,
             debug_state,
@@ -285,6 +292,7 @@ impl AppState {
             lighting_context: LightingContext::earth_like_surface(),
             lighting_atmo_config: LightingAtmosphereConfig::default(),
             lighting_context_buffer: None,
+            keyboard_state: nebula_input::KeyboardState::new(),
         }
     }
 
@@ -309,6 +317,7 @@ impl AppState {
             tick_count: 0,
             clear_color_fn: None,
             custom_update: None,
+            custom_input_update: None,
             config,
             debug_server,
             debug_state,
@@ -369,6 +378,7 @@ impl AppState {
             lighting_context: LightingContext::earth_like_surface(),
             lighting_atmo_config: LightingAtmosphereConfig::default(),
             lighting_context_buffer: None,
+            keyboard_state: nebula_input::KeyboardState::new(),
         }
     }
 
@@ -1244,6 +1254,9 @@ impl ApplicationHandler for AppState {
                     }
                 }
             }
+            WindowEvent::KeyboardInput { event, .. } => {
+                self.keyboard_state.process_event(&event);
+            }
             WindowEvent::RedrawRequested => {
                 // Update debug state first
                 self.update_debug_state();
@@ -1257,6 +1270,8 @@ impl ApplicationHandler for AppState {
 
                 let tick_count = &mut self.tick_count;
                 let custom_update = &mut self.custom_update;
+                let custom_input_update = &mut self.custom_input_update;
+                let keyboard_state = &self.keyboard_state;
                 let camera = &mut self.camera;
                 let camera_time = &mut self.camera_time;
                 let camera_buffer = &self.camera_buffer;
@@ -1319,6 +1334,9 @@ impl ApplicationHandler for AppState {
                         // Call custom update function if provided
                         if let Some(update_fn) = custom_update {
                             update_fn(dt);
+                        }
+                        if let Some(update_fn) = custom_input_update {
+                            update_fn(dt, keyboard_state);
                         }
                     },
                     |_alpha| {},
@@ -2124,6 +2142,9 @@ impl ApplicationHandler for AppState {
                         }
                     }
                 }
+                // Clear per-frame transient key state after all systems have run.
+                self.keyboard_state.clear_transients();
+
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -2181,6 +2202,25 @@ where
     // Store the custom update function in a Box for the app state
     app.custom_update = Some(Box::new(move |dt: f64| {
         custom_state(dt);
+    }));
+
+    event_loop.run_app(&mut app).expect("Event loop failed");
+}
+
+/// Creates an event loop and runs the application with keyboard state forwarded
+/// to the custom update callback each simulation tick.
+///
+/// This function blocks until the window is closed.
+#[instrument(skip_all)]
+pub fn run_with_config_and_input<T>(config: Config, mut custom_state: T)
+where
+    T: FnMut(f64, &nebula_input::KeyboardState) + 'static,
+{
+    let event_loop = EventLoop::new().expect("Failed to create event loop");
+    let mut app = AppState::with_config(config);
+
+    app.custom_input_update = Some(Box::new(move |dt, kb| {
+        custom_state(dt, kb);
     }));
 
     event_loop.run_app(&mut app).expect("Event loop failed");
