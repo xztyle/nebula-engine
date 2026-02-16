@@ -6,3 +6,5 @@ license.workspace = true
 
 [dependencies]
 nebula-math = { path = "../nebula-math" }
+nebula-cubesphere = { path = "../nebula-cubesphere" }
+glam = { workspace = true }

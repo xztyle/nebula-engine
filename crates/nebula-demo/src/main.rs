@@ -2031,6 +2031,78 @@ fn demonstrate_distance_lod() {
     info!("Distance-based LOD demonstration completed successfully");
 }
 
+/// Demonstrates per-face quadtree LOD subdivision.
+fn demonstrate_quadtree_lod_per_face() {
+    use nebula_cubesphere::CubeFace;
+    use nebula_lod::{FaceQuadtreeLod, LodThresholds};
+
+    info!("Starting quadtree LOD per-face demonstration");
+
+    let planet_radius: f64 = 6_371_000_000.0; // Earth-like, mm
+
+    // Create a quadtree for the +Y face with max_depth 5
+    let mut qt = FaceQuadtreeLod::new(
+        CubeFace::PosY,
+        5,
+        LodThresholds::default_planet(),
+        planet_radius,
+    );
+
+    // Camera far away in space — should produce minimal chunks
+    let far_camera = nebula_coords::WorldPosition::new(0, 100_000_000_000_000, 0);
+    let far_chunks = qt.update(&far_camera);
+    info!(
+        "Far camera: {} active chunks on +Y face (expected 1, coarse)",
+        far_chunks.len()
+    );
+    assert!(
+        far_chunks.len() <= 4,
+        "Far camera should produce at most 4 chunks"
+    );
+
+    // Camera on the planet surface — should subdivide deeply
+    let near_camera = nebula_coords::WorldPosition::new(0, planet_radius as i128, 0);
+    let near_chunks = qt.update(&near_camera);
+    info!(
+        "Near camera: {} active chunks on +Y face (should be > far)",
+        near_chunks.len()
+    );
+    assert!(
+        near_chunks.len() > far_chunks.len(),
+        "Near camera should produce more chunks than far camera"
+    );
+
+    // Verify balance constraint: no neighboring leaves differ by >1 LOD
+    for chunk in &near_chunks {
+        let neighbors = qt.leaf_neighbors(chunk);
+        for neighbor in &neighbors {
+            let diff = (chunk.lod as i8 - neighbor.lod as i8).abs();
+            assert!(
+                diff <= 1,
+                "Balance violated: LOD {} vs {} (diff={})",
+                chunk.lod,
+                neighbor.lod,
+                diff
+            );
+        }
+    }
+    info!("Balance constraint verified: all neighbors within 1 LOD level");
+
+    // Show LOD distribution
+    let max_lod = near_chunks.iter().map(|c| c.lod).max().unwrap_or(0);
+    let min_lod = near_chunks.iter().map(|c| c.lod).min().unwrap_or(0);
+    info!("LOD range: {} (finest) to {} (coarsest)", min_lod, max_lod);
+
+    // Test all 6 faces
+    for face in CubeFace::ALL {
+        let mut fqt = FaceQuadtreeLod::new(face, 5, LodThresholds::default_planet(), planet_radius);
+        let chunks = fqt.update(&near_camera);
+        info!("  Face {:?}: {} active chunks", face, chunks.len());
+    }
+
+    info!("Quadtree LOD per-face demonstration completed successfully");
+}
+
 /// Configure system ordering constraints for all engine stages.
 fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
@@ -2175,6 +2247,9 @@ fn main() {
 
     // Demonstrate distance-based LOD selection
     demonstrate_distance_lod();
+
+    // Demonstrate per-face quadtree LOD
+    demonstrate_quadtree_lod_per_face();
 
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
