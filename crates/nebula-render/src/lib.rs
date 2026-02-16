@@ -1,5 +1,6 @@
 //! wgpu rendering pipeline: surface management, render passes, shader loading, and frame graph orchestration.
 
+pub mod batching;
 pub mod buffer;
 pub mod camera;
 pub mod depth;
@@ -11,6 +12,9 @@ pub mod shader;
 pub mod texture;
 pub mod textured_pipeline;
 
+pub use batching::{
+    DrawBatch, DrawCall, DrawGroup, DrawGroupIter, InstancedDraw, InstancedGroupIter,
+};
 // Re-export the main types from the plan
 pub use buffer::{
     BufferAllocator, IndexData, MeshBuffer, VertexPositionColor, VertexPositionNormalUv,

@@ -7,7 +7,7 @@
 use clap::Parser;
 use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
-use nebula_render::{Aabb, Camera, FrustumCuller, ShaderLibrary, load_shader};
+use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use tracing::info;
@@ -246,6 +246,43 @@ fn demonstrate_frustum_culling() {
     info!("Frustum culling demonstration completed successfully");
 }
 
+/// Demonstrates draw call batching by collecting 100 cube draw calls
+/// and batching them by pipeline and material.
+fn demonstrate_draw_call_batching() {
+    info!("Starting draw call batching demonstration");
+
+    let mut batch = DrawBatch::with_capacity(100);
+    let mut rng = Xoshiro256StarStar::seed_from_u64(123);
+
+    // Simulate 100 cubes with 3 pipelines and 4 materials
+    let total_calls = 100;
+    for i in 0..total_calls {
+        let pipeline_id = rng.gen_range(0..3_u64); // 3 pipelines
+        let material_id = rng.gen_range(0..4_u64); // 4 materials
+        let mesh_id = 1; // all cubes share the same mesh
+        batch.push(DrawCall {
+            pipeline_id,
+            material_id,
+            mesh_id,
+            instance_index: i as u32,
+        });
+    }
+
+    batch.sort();
+
+    let group_count = batch.groups().count();
+    let instanced_draw_count: usize = batch.groups().map(|g| g.instanced_groups().count()).sum();
+
+    info!(
+        "Draw calls: {} batched into {} groups, {} instanced draws (was {})",
+        batch.len(),
+        group_count,
+        instanced_draw_count,
+        total_calls
+    );
+    info!("Draw call batching demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -272,6 +309,9 @@ fn main() {
 
     // Demonstrate frustum culling
     demonstrate_frustum_culling();
+
+    // Demonstrate draw call batching
+    demonstrate_draw_call_batching();
 
     // Log initial state
     let mut demo_state = DemoState::new();
