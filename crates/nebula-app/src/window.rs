@@ -13,9 +13,9 @@ use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
 use nebula_render::{
     BufferAllocator, Camera, DepthBuffer, FrameEncoder, IndexData, MeshBuffer, RenderContext,
-    RenderPassBuilder, ShaderLibrary, TEXTURED_SHADER_SOURCE, TextureManager, TexturedPipeline,
-    UNLIT_SHADER_SOURCE, UnlitPipeline, VertexPositionColor, VertexPositionNormalUv, draw_textured,
-    draw_unlit, init_render_context_blocking,
+    RenderPassBuilder, ShaderLibrary, SurfaceWrapper, TEXTURED_SHADER_SOURCE, TextureManager,
+    TexturedPipeline, UNLIT_SHADER_SOURCE, UnlitPipeline, VertexPositionColor,
+    VertexPositionNormalUv, draw_textured, draw_unlit, init_render_context_blocking,
 };
 use tracing::{error, info, instrument, warn};
 use winit::application::ApplicationHandler;
@@ -60,10 +60,8 @@ pub struct AppState {
     pub window: Option<Arc<Window>>,
     /// GPU context owning device, queue, and surface.
     pub gpu: Option<RenderContext>,
-    /// Current surface width in physical pixels.
-    pub surface_width: u32,
-    /// Current surface height in physical pixels.
-    pub surface_height: u32,
+    /// Cross-platform surface wrapper that normalizes resize/DPI behavior.
+    pub surface_wrapper: SurfaceWrapper,
     /// Fixed-timestep game loop.
     pub game_loop: GameLoop,
     /// Simulation tick counter (incremented each fixed update).
@@ -118,8 +116,7 @@ impl AppState {
         Self {
             window: None,
             gpu: None,
-            surface_width: DEFAULT_WIDTH as u32,
-            surface_height: DEFAULT_HEIGHT as u32,
+            surface_wrapper: SurfaceWrapper::new(DEFAULT_WIDTH as u32, DEFAULT_HEIGHT as u32, 1.0),
             game_loop: GameLoop::new(),
             tick_count: 0,
             clear_color_fn: None,
@@ -160,8 +157,7 @@ impl AppState {
         Self {
             window: None,
             gpu: None,
-            surface_width: config.window.width,
-            surface_height: config.window.height,
+            surface_wrapper: SurfaceWrapper::new(config.window.width, config.window.height, 1.0),
             game_loop: GameLoop::new(),
             tick_count: 0,
             clear_color_fn: None,
@@ -188,15 +184,20 @@ impl AppState {
 
     /// Computes the logical size from the current physical size and scale factor.
     pub fn logical_size(&self) -> (f64, f64) {
-        let scale = self
-            .window
-            .as_ref()
-            .map(|w| w.scale_factor())
-            .unwrap_or(1.0);
         (
-            self.surface_width as f64 / scale,
-            self.surface_height as f64 / scale,
+            self.surface_wrapper.logical_width(),
+            self.surface_wrapper.logical_height(),
         )
+    }
+
+    /// Returns the current physical surface width.
+    pub fn surface_width(&self) -> u32 {
+        self.surface_wrapper.physical_width()
+    }
+
+    /// Returns the current physical surface height.
+    pub fn surface_height(&self) -> u32 {
+        self.surface_wrapper.physical_height()
     }
 
     /// Initialize the rendering pipeline and resources.
@@ -204,7 +205,8 @@ impl AppState {
         use wgpu::util::DeviceExt;
 
         // Create depth buffer
-        let depth_buffer = DepthBuffer::new(&gpu.device, self.surface_width, self.surface_height);
+        let depth_buffer =
+            DepthBuffer::new(&gpu.device, self.surface_width(), self.surface_height());
 
         // Load the unlit shader
         let mut shader_library = ShaderLibrary::new();
@@ -270,7 +272,7 @@ impl AppState {
         // Initialize camera position (orbit around the triangle at distance 3)
         self.camera.position = glam::Vec3::new(0.0, 0.0, 3.0);
         self.camera
-            .set_aspect_ratio(self.surface_width as f32, self.surface_height as f32);
+            .set_aspect_ratio(self.surface_width() as f32, self.surface_height() as f32);
 
         // Create camera uniform buffer with camera's view-projection matrix
         let camera_uniform = self.camera.to_uniform();
@@ -392,8 +394,8 @@ impl AppState {
             state.frame_time_ms = frame_time_ms;
             state.fps = fps;
             state.entity_count = 0; // Will be updated once ECS is implemented
-            state.window_width = self.surface_width;
-            state.window_height = self.surface_height;
+            state.window_width = self.surface_width();
+            state.window_height = self.surface_height();
             state.uptime_seconds = uptime_seconds;
         }
 
@@ -423,6 +425,16 @@ impl ApplicationHandler for AppState {
                 .create_window(attrs)
                 .expect("Failed to create window");
             let window = Arc::new(window);
+
+            // Initialize the surface wrapper with actual window dimensions and scale
+            let scale_factor = window.scale_factor();
+            let inner_size = window.inner_size();
+            self.surface_wrapper =
+                SurfaceWrapper::new(inner_size.width, inner_size.height, scale_factor);
+            info!(
+                "Surface wrapper initialized: {}x{} (scale: {:.2})",
+                inner_size.width, inner_size.height, scale_factor
+            );
 
             match init_render_context_blocking(window.clone()) {
                 Ok(ctx) => {
@@ -463,26 +475,60 @@ impl ApplicationHandler for AppState {
                 event_loop.exit();
             }
             WindowEvent::Resized(new_size) => {
-                self.surface_width = new_size.width;
-                self.surface_height = new_size.height;
+                if let Some(resize) = self
+                    .surface_wrapper
+                    .handle_resize(new_size.width, new_size.height)
+                {
+                    let w = resize.physical.width;
+                    let h = resize.physical.height;
 
-                // Update camera aspect ratio
-                self.camera
-                    .set_aspect_ratio(new_size.width as f32, new_size.height as f32);
+                    // Update camera aspect ratio
+                    self.camera.set_aspect_ratio(w as f32, h as f32);
 
-                if let Some(gpu) = &mut self.gpu {
-                    gpu.resize(new_size.width, new_size.height);
+                    if let Some(gpu) = &mut self.gpu {
+                        gpu.resize(w, h);
+                    }
+
+                    // Resize depth buffer
+                    if let (Some(depth_buffer), Some(gpu)) = (&mut self.depth_buffer, &self.gpu) {
+                        depth_buffer.resize(&gpu.device, w, h);
+                    }
+
+                    info!(
+                        "Window resized to {}x{} (scale: {:.2})",
+                        w, h, resize.scale_factor
+                    );
                 }
-
-                // Resize depth buffer
-                if let (Some(depth_buffer), Some(gpu)) = (&mut self.depth_buffer, &self.gpu) {
-                    depth_buffer.resize(&gpu.device, new_size.width, new_size.height);
-                }
-
-                info!("Window resized to {}x{}", new_size.width, new_size.height);
             }
-            WindowEvent::ScaleFactorChanged { .. } => {
-                info!("Scale factor changed");
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                // Get the new physical size from the window after the scale change
+                if let Some(window) = &self.window {
+                    let new_inner = window.inner_size();
+                    if let Some(resize) = self.surface_wrapper.handle_scale_factor_changed(
+                        scale_factor,
+                        new_inner.width,
+                        new_inner.height,
+                    ) {
+                        let w = resize.physical.width;
+                        let h = resize.physical.height;
+
+                        self.camera.set_aspect_ratio(w as f32, h as f32);
+
+                        if let Some(gpu) = &mut self.gpu {
+                            gpu.resize(w, h);
+                        }
+
+                        if let (Some(depth_buffer), Some(gpu)) = (&mut self.depth_buffer, &self.gpu)
+                        {
+                            depth_buffer.resize(&gpu.device, w, h);
+                        }
+
+                        info!(
+                            "Scale factor changed to {:.2}, resized to {}x{}",
+                            scale_factor, w, h
+                        );
+                    }
+                }
             }
             WindowEvent::RedrawRequested => {
                 // Update debug state first
@@ -624,10 +670,9 @@ impl ApplicationHandler for AppState {
                             frame_encoder.submit();
                         }
                         Err(nebula_render::SurfaceError::Lost) => {
-                            let w = self.surface_width;
-                            let h = self.surface_height;
+                            let size = self.surface_wrapper.physical_size();
                             if let Some(gpu) = &mut self.gpu {
-                                gpu.resize(w, h);
+                                gpu.resize(size.width, size.height);
                             }
                         }
                         Err(nebula_render::SurfaceError::OutOfMemory) => {
@@ -724,8 +769,8 @@ mod tests {
     #[test]
     fn test_initial_dimensions() {
         let state = AppState::new();
-        assert_eq!(state.surface_width, 1280);
-        assert_eq!(state.surface_height, 720);
+        assert_eq!(state.surface_width(), 1280);
+        assert_eq!(state.surface_height(), 720);
     }
 
     #[test]
@@ -737,21 +782,18 @@ mod tests {
     #[test]
     fn test_resize_tracking() {
         let mut state = AppState::new();
-        state.surface_width = 1920;
-        state.surface_height = 1080;
-        assert_eq!(state.surface_width, 1920);
-        assert_eq!(state.surface_height, 1080);
+        state.surface_wrapper.handle_resize(1920, 1080);
+        assert_eq!(state.surface_width(), 1920);
+        assert_eq!(state.surface_height(), 1080);
     }
 
     #[test]
     fn test_logical_size_calculation() {
         let mut state = AppState::new();
-        // Simulate 2x HiDPI: physical 2560x1440, no window so scale=1.0
-        // With no window, scale defaults to 1.0, so logical == physical.
-        state.surface_width = 2560;
-        state.surface_height = 1440;
+        // Simulate 2x HiDPI: physical 2560x1440, scale=1.0
+        state.surface_wrapper.handle_resize(2560, 1440);
         let (lw, lh) = state.logical_size();
-        // Without a real window, scale factor is 1.0
+        // Scale factor is 1.0 (default), so logical == physical
         assert!((lw - 2560.0).abs() < f64::EPSILON);
         assert!((lh - 1440.0).abs() < f64::EPSILON);
     }

@@ -9,6 +9,7 @@ pub mod gpu;
 pub mod pass;
 pub mod pipeline;
 pub mod shader;
+pub mod surface;
 pub mod texture;
 pub mod textured_pipeline;
 
@@ -26,6 +27,7 @@ pub use gpu::{RenderContext, RenderContextError, SurfaceError, init_render_conte
 pub use pass::{DepthAttachmentConfig, FrameEncoder, RenderPassBuilder, SKY_BLUE};
 pub use pipeline::{CameraUniform, UNLIT_SHADER_SOURCE, UnlitPipeline, draw_unlit};
 pub use shader::{ShaderError, ShaderLibrary};
+pub use surface::{MIN_SURFACE_DIMENSION, PhysicalSize, SurfaceResizeEvent, SurfaceWrapper};
 pub use texture::{
     ManagedTexture, TextureError, TextureLayerData, TextureManager, mip_level_count,
 };
