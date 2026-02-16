@@ -9,6 +9,7 @@ pub mod frustum;
 pub mod gpu;
 pub mod gpu_buffer_pool;
 pub mod gpu_chunk_mesh;
+pub mod lens_flare;
 pub mod pass;
 pub mod pipeline;
 pub mod shader;
@@ -20,6 +21,7 @@ pub use batching::{
     DrawBatch, DrawCall, DrawGroup, DrawGroupIter, InstancedDraw, InstancedGroupIter,
 };
 pub use bloom::{BloomConfig, BloomPipeline};
+pub use lens_flare::{FlareElement, FlareShape, LensFlareConfig, LensFlareRenderer};
 // Re-export the main types from the plan
 pub use buffer::{
     BufferAllocator, IndexData, MeshBuffer, VertexPositionColor, VertexPositionNormalUv,

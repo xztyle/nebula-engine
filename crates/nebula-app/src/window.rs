@@ -161,6 +161,8 @@ pub struct AppState {
     pub bloom_pipeline: Option<BloomPipeline>,
     /// Sun corona renderer (billboard with animated HDR corona).
     pub sun_renderer: Option<SunRenderer>,
+    /// Screen-space lens flare renderer.
+    pub lens_flare: Option<nebula_render::LensFlareRenderer>,
 }
 
 impl AppState {
@@ -218,6 +220,7 @@ impl AppState {
             skybox_renderer: None,
             bloom_pipeline: None,
             sun_renderer: None,
+            lens_flare: None,
         }
     }
 
@@ -282,6 +285,7 @@ impl AppState {
             skybox_renderer: None,
             bloom_pipeline: None,
             sun_renderer: None,
+            lens_flare: None,
         }
     }
 
@@ -536,6 +540,10 @@ impl AppState {
         // --- Sun corona renderer (billboard in HDR space) ---
         let sun = SunRenderer::new(&gpu.device, hdr_format);
         self.sun_renderer = Some(sun);
+
+        // --- Lens flare renderer (screen-space flare elements in HDR) ---
+        let lens_flare = nebula_render::LensFlareRenderer::new(&gpu.device, hdr_format);
+        self.lens_flare = Some(lens_flare);
 
         // --- Ocean surface renderer ---
         self.initialize_ocean_renderer(gpu, planet_radius);
@@ -1088,6 +1096,22 @@ impl ApplicationHandler for AppState {
                                         let mut sun_pass = frame_encoder
                                             .begin_render_pass_to(&sun_pb, bloom.hdr_view());
                                         sun_renderer.render(&mut sun_pass);
+                                    }
+                                }
+
+                                // Render lens flare to HDR (additive, after sun)
+                                if let Some(flare) = &self.lens_flare {
+                                    let sun_dir = self.day_night.sun_direction;
+                                    let sun_brightness = 50.0_f32; // matches SunProperties::hdr_brightness
+                                    let visible =
+                                        flare.update(&gpu.queue, sun_dir, sun_brightness, vp_rot);
+                                    if visible {
+                                        let flare_pb = RenderPassBuilder::new()
+                                            .preserve_color()
+                                            .label("lens-flare-hdr-pass");
+                                        let mut flare_pass = frame_encoder
+                                            .begin_render_pass_to(&flare_pb, bloom.hdr_view());
+                                        flare.render(&mut flare_pass, flare.element_count());
                                     }
                                 }
 
