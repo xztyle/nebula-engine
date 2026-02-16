@@ -4006,6 +4006,93 @@ fn demonstrate_chat_system() {
     info!("Chat system demonstration completed successfully");
 }
 
+fn demonstrate_world_state_snapshots() {
+    use nebula_multiplayer::chunk_streaming::ChunkId;
+    use nebula_multiplayer::{
+        CURRENT_SNAPSHOT_VERSION, ChunkSnapshot, DirtyChunkTracker, EntitySnapshot, NetworkId,
+        SnapshotConfig, SnapshotHeader, SnapshotTimer, WorldSnapshot, check_version, load_snapshot,
+        write_snapshot,
+    };
+    use std::time::Duration;
+
+    info!("Starting world state snapshots demonstration");
+
+    // Dirty chunk tracker.
+    let mut tracker = DirtyChunkTracker::new();
+    for i in 0..5 {
+        tracker.mark_dirty(ChunkId {
+            face: 0,
+            lod: 0,
+            x: i,
+            y: 0,
+            z: 0,
+        });
+    }
+    info!("  Tracked {} dirty chunks", tracker.len());
+    let dirty = tracker.drain();
+    assert_eq!(dirty.len(), 5);
+    assert!(tracker.is_empty());
+    info!("  Drained dirty set, tracker now empty ✓");
+
+    // Build a full snapshot.
+    let chunks: Vec<ChunkSnapshot> = dirty
+        .iter()
+        .map(|id| ChunkSnapshot {
+            chunk_id: *id,
+            voxel_data: vec![0xAA; 64],
+        })
+        .collect();
+    let snapshot = WorldSnapshot {
+        header: SnapshotHeader {
+            version: CURRENT_SNAPSHOT_VERSION,
+            snapshot_id: 1,
+            server_tick: 1000,
+            timestamp: 1_700_000_000_000,
+            is_incremental: false,
+            parent_snapshot_id: None,
+        },
+        modified_chunks: chunks,
+        entities: vec![EntitySnapshot {
+            network_id: NetworkId(1),
+            components: vec![("Pos".into(), vec![1, 2, 3])],
+        }],
+        world_time: 100.0,
+    };
+
+    // Write and reload.
+    let dir = std::env::temp_dir().join("nebula_snap_demo");
+    let _ = std::fs::remove_dir_all(&dir);
+    let config = SnapshotConfig {
+        snapshot_dir: dir.clone(),
+        ..Default::default()
+    };
+    let path = write_snapshot(&snapshot, &config).unwrap();
+    info!("  Wrote snapshot to {}", path.display());
+    let loaded = load_snapshot(&path).unwrap();
+    assert_eq!(loaded.header.snapshot_id, 1);
+    assert_eq!(loaded.modified_chunks.len(), 5);
+    info!(
+        "  Loaded snapshot: {} chunks, {} entities ✓",
+        loaded.modified_chunks.len(),
+        loaded.entities.len()
+    );
+
+    // Version check.
+    assert!(check_version(&loaded.header).is_ok());
+    info!("  Version {} accepted ✓", CURRENT_SNAPSHOT_VERSION);
+
+    // Timer.
+    let timer = SnapshotTimer::new(SnapshotConfig {
+        interval: Duration::from_secs(300),
+        ..Default::default()
+    });
+    assert!(!timer.should_snapshot());
+    info!("  Timer: should_snapshot=false (just created) ✓");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    info!("World state snapshots demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -4568,6 +4655,9 @@ fn main() {
 
     // Demonstrate chat system
     demonstrate_chat_system();
+
+    // Demonstrate world state snapshots
+    demonstrate_world_state_snapshots();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {

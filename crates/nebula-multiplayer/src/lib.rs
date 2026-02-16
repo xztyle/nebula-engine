@@ -9,6 +9,7 @@ pub mod player_session;
 pub mod prediction;
 pub mod reconciliation;
 pub mod replication;
+pub mod snapshot;
 pub mod voxel_edit;
 
 pub use authority::{
@@ -42,6 +43,11 @@ pub use replication::{
     ComponentDescriptor, ComponentTypeTag, DespawnEntity, EntityUpdate, NetworkId,
     ReplicationClientSystem, ReplicationMessages, ReplicationServerSystem, ReplicationSet,
     SpawnEntity,
+};
+pub use snapshot::{
+    CURRENT_SNAPSHOT_VERSION, ChunkSnapshot, DirtyChunkTracker, EntitySnapshot, SnapshotConfig,
+    SnapshotError, SnapshotHeader, SnapshotTimer, WorldSnapshot, check_version, load_snapshot,
+    write_snapshot,
 };
 pub use voxel_edit::{
     EditRejection, PlayerPosition, ServerChunkStore, VoxelEditEvent, VoxelEditIntent,
