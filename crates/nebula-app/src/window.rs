@@ -104,6 +104,8 @@ pub struct AppState {
     pub checkerboard_texture: Option<std::sync::Arc<nebula_render::ManagedTexture>>,
     /// Camera bind group for the textured pipeline.
     pub textured_camera_bind_group: Option<wgpu::BindGroup>,
+    /// Cube-face quad meshes (six faces, each a distinct color).
+    pub cube_face_meshes: Vec<MeshBuffer>,
 }
 
 impl AppState {
@@ -138,6 +140,7 @@ impl AppState {
             textured_quad_mesh: None,
             checkerboard_texture: None,
             textured_camera_bind_group: None,
+            cube_face_meshes: Vec::new(),
         }
     }
 
@@ -179,6 +182,7 @@ impl AppState {
             textured_quad_mesh: None,
             checkerboard_texture: None,
             textured_camera_bind_group: None,
+            cube_face_meshes: Vec::new(),
         }
     }
 
@@ -375,7 +379,12 @@ impl AppState {
         self.camera_buffer = Some(camera_buffer);
         self.camera_bind_group = Some(camera_bind_group);
 
-        info!("Rendering pipeline initialized successfully with depth buffer and textured quad");
+        // Create cube-face quads using CubeFace basis vectors
+        self.cube_face_meshes = create_cube_face_meshes(&allocator);
+
+        info!(
+            "Rendering pipeline initialized successfully with depth buffer, textured quad, and cube faces"
+        );
     }
 
     /// Updates the debug state with current frame metrics.
@@ -665,6 +674,15 @@ impl ApplicationHandler for AppState {
                                         quad_mesh,
                                     );
                                 }
+
+                                // Render cube-face quads
+                                if let (Some(pipeline), Some(bind_group)) =
+                                    (&self.unlit_pipeline, &self.camera_bind_group)
+                                {
+                                    for mesh in &self.cube_face_meshes {
+                                        draw_unlit(&mut render_pass, pipeline, bind_group, mesh);
+                                    }
+                                }
                             }
 
                             frame_encoder.submit();
@@ -744,6 +762,61 @@ where
     }));
 
     event_loop.run_app(&mut app).expect("Event loop failed");
+}
+
+/// Create six colored quad meshes, one per [`CubeFace`], arranged as a cube
+/// floating at `(0, 0, -5)` with half-extent 0.6.
+fn create_cube_face_meshes(allocator: &BufferAllocator) -> Vec<MeshBuffer> {
+    use nebula_cubesphere::CubeFace;
+
+    // Colors: PosX=red, NegX=cyan, PosY=green, NegY=magenta, PosZ=blue, NegZ=yellow
+    let colors: [[f32; 4]; 6] = [
+        [1.0, 0.0, 0.0, 1.0], // PosX - red
+        [0.0, 1.0, 1.0, 1.0], // NegX - cyan
+        [0.0, 1.0, 0.0, 1.0], // PosY - green
+        [1.0, 0.0, 1.0, 1.0], // NegY - magenta
+        [0.0, 0.0, 1.0, 1.0], // PosZ - blue
+        [1.0, 1.0, 0.0, 1.0], // NegZ - yellow
+    ];
+
+    let half = 0.6_f64;
+    let center = glam::DVec3::new(0.0, 0.0, -5.0);
+
+    CubeFace::ALL
+        .iter()
+        .zip(colors.iter())
+        .enumerate()
+        .map(|(i, (face, color))| {
+            let n = face.normal() * half;
+            let t = face.tangent() * half;
+            let b = face.bitangent() * half;
+            let face_center = center + n;
+
+            // Four corners of the quad
+            let corners = [
+                face_center - t - b, // bottom-left
+                face_center + t - b, // bottom-right
+                face_center + t + b, // top-right
+                face_center - t + b, // top-left
+            ];
+
+            let verts: Vec<VertexPositionColor> = corners
+                .iter()
+                .map(|c| VertexPositionColor {
+                    position: [c.x as f32, c.y as f32, c.z as f32],
+                    color: *color,
+                })
+                .collect();
+
+            let indices: [u16; 6] = [0, 1, 2, 2, 3, 0];
+            let label = format!("cube-face-{i}");
+            allocator.create_mesh(
+                &label,
+                bytemuck::cast_slice(&verts),
+                IndexData::U16(&indices),
+            )
+        })
+        .collect()
 }
 
 /// Generate a checkerboard RGBA8 texture.

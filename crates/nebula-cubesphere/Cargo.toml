@@ -3,3 +3,6 @@ name = "nebula-cubesphere"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+
+[dependencies]
+glam = { workspace = true }

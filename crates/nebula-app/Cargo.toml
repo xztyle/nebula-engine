@@ -11,6 +11,7 @@ glam = { workspace = true }
 tracing = "0.1"
 nebula-config = { path = "../nebula-config" }
 nebula-debug = { path = "../nebula-debug" }
+nebula-cubesphere = { path = "../nebula-cubesphere" }
 nebula-render = { path = "../nebula-render" }
 wgpu = { workspace = true }
 winit = { workspace = true }
