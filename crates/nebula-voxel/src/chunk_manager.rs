@@ -31,6 +31,19 @@ impl ChunkAddress {
     pub fn new(x: i64, y: i64, z: i64, face: u8) -> Self {
         Self { x, y, z, face }
     }
+
+    /// Returns the address of the neighboring chunk offset by `(dx, dy, dz)`.
+    ///
+    /// Typically called with unit offsets (e.g. `(1,0,0)` for +X neighbor).
+    /// The `face` field is preserved (same cube-sphere face).
+    pub fn offset(self, dx: i64, dy: i64, dz: i64) -> Self {
+        Self {
+            x: self.x + dx,
+            y: self.y + dy,
+            z: self.z + dz,
+            face: self.face,
+        }
+    }
 }
 
 /// Owns all currently-loaded chunks and provides fast access by [`ChunkAddress`].

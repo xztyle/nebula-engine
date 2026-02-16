@@ -5,6 +5,7 @@ pub mod async_mesh;
 pub mod chunk_mesh;
 pub mod face_direction;
 pub mod greedy;
+pub mod invalidation;
 pub mod neighborhood;
 pub mod packed;
 pub mod visibility;
@@ -22,3 +23,4 @@ pub use visibility::{compute_visible_faces, count_total_faces, count_visible_fac
 pub use visible_faces::VisibleFaces;
 
 pub use async_mesh::{MeshingPipeline, MeshingResult, MeshingTask};
+pub use invalidation::{ChunkMeshState, MeshInvalidator};

@@ -1143,6 +1143,74 @@ fn demonstrate_async_meshing() -> (usize, usize) {
     (results.len(), total_quads)
 }
 
+/// Demonstrates mesh cache invalidation: version tracking and boundary detection.
+fn demonstrate_mesh_invalidation() -> (usize, usize, usize) {
+    use nebula_mesh::{ChunkMeshState, MeshInvalidator};
+    use nebula_voxel::ChunkAddress;
+
+    info!("Starting mesh cache invalidation demonstration");
+
+    // Interior edit: only the edited chunk is invalidated.
+    let addr = ChunkAddress::new(0, 0, 0, 0);
+    let interior_dirty = MeshInvalidator::invalidate(addr, (16, 16, 16), 32);
+    assert_eq!(
+        interior_dirty.len(),
+        1,
+        "Interior edit should only invalidate self"
+    );
+
+    // Boundary edit at x=0: self + -X neighbor.
+    let boundary_dirty = MeshInvalidator::invalidate(addr, (0, 16, 16), 32);
+    assert_eq!(
+        boundary_dirty.len(),
+        2,
+        "Boundary edit should invalidate self + 1 neighbor"
+    );
+
+    // Corner edit at (0,0,0): self + 3 face neighbors.
+    let corner_dirty = MeshInvalidator::invalidate(addr, (0, 0, 0), 32);
+    assert_eq!(
+        corner_dirty.len(),
+        4,
+        "Corner edit should invalidate self + 3 neighbors"
+    );
+
+    // Version-based staleness detection.
+    let mut state = ChunkMeshState::new();
+    assert!(
+        state.needs_remesh(1),
+        "Fresh state should need remesh vs v1"
+    );
+    state.meshed_version = 1;
+    assert!(
+        !state.needs_remesh(1),
+        "Up-to-date state should not need remesh"
+    );
+    assert!(
+        state.needs_remesh(2),
+        "Stale state should need remesh vs v2"
+    );
+    state.remesh_pending = true;
+    assert!(
+        !state.needs_remesh(2),
+        "Pending remesh should suppress resubmit"
+    );
+
+    info!(
+        "Mesh invalidation: interior={}, boundary={}, corner={} dirty chunks",
+        interior_dirty.len(),
+        boundary_dirty.len(),
+        corner_dirty.len(),
+    );
+
+    info!("Mesh cache invalidation demonstration completed successfully");
+    (
+        interior_dirty.len(),
+        boundary_dirty.len(),
+        corner_dirty.len(),
+    )
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -1236,6 +1304,9 @@ fn main() {
     // Demonstrate async mesh generation
     let (async_chunks, async_quads) = demonstrate_async_meshing();
 
+    // Demonstrate mesh cache invalidation
+    let (inv_interior, inv_boundary, inv_corner) = demonstrate_mesh_invalidation();
+
     // Log initial state
     let mut demo_state = DemoState::new();
     let initial_sector = SectorCoord::from_world(&demo_state.position);
@@ -1271,6 +1342,10 @@ fn main() {
         gpu_reused,
         async_chunks,
         async_quads,
+    );
+    config.window.title = format!(
+        "{} - Invalidation: int={}/bnd={}/crn={}",
+        config.window.title, inv_interior, inv_boundary, inv_corner,
     );
 
     info!(
