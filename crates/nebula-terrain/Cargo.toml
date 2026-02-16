@@ -17,3 +17,4 @@ rand_chacha = "0.9"
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 num_cpus = { workspace = true }
+libm = "0.2"

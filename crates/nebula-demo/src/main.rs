@@ -1470,6 +1470,8 @@ fn demonstrate_biome_system() -> usize {
 fn demonstrate_heightmap() -> (f64, f64) {
     use nebula_terrain::{HeightmapParams, HeightmapSampler};
 
+    let world_seed: u64 = 0xDEAD_BEEF;
+    info!("Seed: 0x{:X}, deterministic: true", world_seed);
     info!("Starting multi-octave noise heightmap demonstration");
 
     let params = HeightmapParams {
