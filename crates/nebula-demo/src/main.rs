@@ -7,7 +7,10 @@
 use clap::Parser;
 use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
-use nebula_cubesphere::{CubeFace, FaceCoord, face_coord_to_sphere_everitt};
+use nebula_cubesphere::{
+    CubeFace, FaceCoord, direction_to_face, face_coord_to_sphere_everitt,
+    sphere_to_face_coord_everitt,
+};
 use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
@@ -316,6 +319,59 @@ fn demonstrate_cubesphere_projection() {
     info!("Cubesphere projection demonstration completed successfully");
 }
 
+/// Demonstrates sphere-to-cube inverse projection by picking random sphere
+/// points, mapping them back to face coordinates, and verifying the roundtrip.
+fn demonstrate_sphere_to_cube_inverse() {
+    info!("Starting sphere-to-cube inverse demonstration");
+
+    let mut rng = Xoshiro256StarStar::seed_from_u64(77);
+    let sample_count = 200;
+    let mut max_error: f64 = 0.0;
+    let mut face_counts = [0u32; 6];
+
+    for _ in 0..sample_count {
+        // Generate a random point on the unit sphere
+        let theta: f64 = rng.gen_range(0.0..std::f64::consts::TAU);
+        let phi: f64 = rng.gen_range(-1.0_f64..1.0).acos();
+        let dir = glam::DVec3::new(phi.sin() * theta.cos(), phi.sin() * theta.sin(), phi.cos());
+        let dir = dir.normalize();
+
+        // Determine face
+        let face = direction_to_face(dir);
+        face_counts[face as usize] += 1;
+
+        // Roundtrip through Everitt inverse
+        // Pick a random face coord, project to sphere, then invert
+        let u: f64 = rng.gen_range(0.01..0.99);
+        let v: f64 = rng.gen_range(0.01..0.99);
+        let original = FaceCoord::new(face, u, v);
+        let sphere_pt = face_coord_to_sphere_everitt(&original);
+        let recovered = sphere_to_face_coord_everitt(sphere_pt);
+
+        let err_u = (recovered.u - original.u).abs();
+        let err_v = (recovered.v - original.v).abs();
+        let err = err_u.max(err_v);
+        if err > max_error {
+            max_error = err;
+        }
+    }
+
+    info!(
+        "Inverse projection: {} roundtrips, max error: {:.2e}",
+        sample_count, max_error
+    );
+    info!(
+        "Face distribution: +X={} -X={} +Y={} -Y={} +Z={} -Z={}",
+        face_counts[0],
+        face_counts[1],
+        face_counts[2],
+        face_counts[3],
+        face_counts[4],
+        face_counts[5]
+    );
+    info!("Sphere-to-cube inverse demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -348,6 +404,9 @@ fn main() {
 
     // Demonstrate cubesphere projection
     demonstrate_cubesphere_projection();
+
+    // Demonstrate sphere-to-cube inverse projection
+    demonstrate_sphere_to_cube_inverse();
 
     // Log initial state
     let mut demo_state = DemoState::new();
