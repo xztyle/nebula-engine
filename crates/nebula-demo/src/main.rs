@@ -2881,9 +2881,28 @@ fn main() {
     // Gamepad manager for controller input.
     let mut gamepad_mgr = nebula_input::GamepadManager::new();
 
-    // Action mapping system: abstract input bindings.
-    let input_map = nebula_input::InputMap::default_fps();
+    // Input context stack: gameplay context is the default.
+    let gameplay_ctx = nebula_input::InputContext {
+        name: "gameplay",
+        input_map: nebula_input::InputMap::default_fps(),
+        cursor_mode: nebula_input::CursorMode::Captured,
+        consumes_input: true,
+        text_input: false,
+    };
+    let mut context_stack = nebula_input::InputContextStack::new(gameplay_ctx);
     let mut action_state = nebula_input::ActionState::new();
+
+    // Menu context: Escape to close, Free cursor, consumes input.
+    let menu_input_map = {
+        let mut map = nebula_input::InputMap::new();
+        map.set_bindings(
+            nebula_input::Action::Pause,
+            vec![nebula_input::InputBinding::Key(
+                winit::keyboard::KeyCode::Escape,
+            )],
+        );
+        map
+    };
 
     nebula_app::window::run_with_config_and_input(config, move |dt, kb, ms| {
         demo_state.update(dt);
@@ -2891,12 +2910,12 @@ fn main() {
         // Poll gamepad events.
         gamepad_mgr.update();
 
-        // Resolve actions from current input state.
+        // Resolve actions from the context stack.
         let gamepad = gamepad_mgr
             .connected_gamepads()
             .next()
             .and_then(|id| gamepad_mgr.gamepad(id));
-        nebula_input::ActionResolver::resolve(&input_map, kb, ms, gamepad, &mut action_state);
+        context_stack.resolve(kb, ms, gamepad, &mut action_state);
 
         // Mouse look: apply mouse delta to yaw/pitch.
         let sensitivity = 0.003_f32;
@@ -2952,7 +2971,28 @@ fn main() {
             tracing::debug!("Jump!");
         }
         if action_state.action_just_activated(nebula_input::Action::Pause) {
-            tracing::debug!("Pause toggled");
+            if context_stack.active_context().name == "menu" {
+                context_stack.pop_context();
+                tracing::debug!(
+                    "Menu closed → {}  cursor={:?}",
+                    context_stack.active_context().name,
+                    context_stack.active_context().cursor_mode
+                );
+            } else {
+                let menu_ctx = nebula_input::InputContext {
+                    name: "menu",
+                    input_map: menu_input_map.clone(),
+                    cursor_mode: nebula_input::CursorMode::Free,
+                    consumes_input: true,
+                    text_input: false,
+                };
+                context_stack.push_context(menu_ctx);
+                tracing::debug!(
+                    "Menu opened → {}  cursor={:?}",
+                    context_stack.active_context().name,
+                    context_stack.active_context().cursor_mode
+                );
+            }
         }
     });
 }

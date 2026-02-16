@@ -356,6 +356,15 @@ impl ActionState {
         }
     }
 
+    /// Shift current values to previous (call once at the start of each frame).
+    ///
+    /// Used by [`super::InputContextStack::resolve`] which may call
+    /// [`ActionResolver::resolve_partial`] multiple times per frame.
+    pub fn begin_frame(&mut self) {
+        self.prev_values.clone_from(&self.values);
+        self.values.clear();
+    }
+
     /// Whether an action's value is above the activation threshold.
     #[must_use]
     pub fn is_action_active(&self, action: Action) -> bool {
@@ -415,6 +424,38 @@ impl ActionResolver {
             }
 
             // Clamp to [-1, 1].
+            value = value.clamp(-1.0, 1.0);
+            state.values.insert(*action, value);
+        }
+    }
+
+    /// Resolve actions from a single context's input map, accumulating into `state`.
+    ///
+    /// Unlike [`Self::resolve`], this does **not** call `begin_frame` — the caller
+    /// is responsible for that. If `keyboard` is `None`, keyboard bindings are skipped
+    /// (used for text-input contexts where keys go to a text buffer instead).
+    pub fn resolve_partial(
+        input_map: &InputMap,
+        keyboard: Option<&KeyboardState>,
+        mouse: &MouseState,
+        gamepad: Option<&GamepadState>,
+        state: &mut ActionState,
+    ) {
+        let empty_kb = KeyboardState::new();
+        let kb = keyboard.unwrap_or(&empty_kb);
+
+        for (action, bindings) in &input_map.bindings {
+            let mut value = state.values.get(action).copied().unwrap_or(0.0);
+
+            for binding in bindings {
+                // Skip keyboard bindings if keyboard is None
+                if keyboard.is_none() && matches!(binding, InputBinding::Key(_)) {
+                    continue;
+                }
+                let v = Self::read_binding(binding, kb, mouse, gamepad);
+                value += v;
+            }
+
             value = value.clamp(-1.0, 1.0);
             state.values.insert(*action, value);
         }
