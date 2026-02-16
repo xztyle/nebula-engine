@@ -35,9 +35,15 @@ struct MaterialGpuData {
     opacity: f32,
 };
 
+struct AnimationGpuData {
+    uv_offset: vec2<f32>,
+    _padding: vec2<f32>,
+};
+
 @group(2) @binding(0) var atlas_texture: texture_2d<f32>;
 @group(2) @binding(1) var atlas_sampler: sampler;
 @group(2) @binding(2) var<storage, read> materials: array<MaterialGpuData>;
+@group(2) @binding(3) var<storage, read> anim_data: array<AnimationGpuData>;
 
 // --- Bind Group 3: Shadow Map ---
 
@@ -118,7 +124,9 @@ fn shadow_factor(world_pos: vec3<f32>) -> f32 {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let mat = materials[in.material_id];
 
-    let tex_color = textureSample(atlas_texture, atlas_sampler, in.uv);
+    let anim = anim_data[in.material_id];
+    let animated_uv = in.uv + anim.uv_offset;
+    let tex_color = textureSample(atlas_texture, atlas_sampler, animated_uv);
     let albedo = tex_color.rgb * mat.albedo.rgb;
     let metallic = mat.metallic;
     let roughness = max(mat.roughness, 0.04);

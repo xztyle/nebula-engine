@@ -136,6 +136,17 @@ impl PbrVoxelPipeline {
                         },
                         count: None,
                     },
+                    // binding 3: AnimationGpuData[] storage buffer
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: NonZeroU64::new(16), // one AnimationGpuData
+                        },
+                        count: None,
+                    },
                 ],
             });
 
