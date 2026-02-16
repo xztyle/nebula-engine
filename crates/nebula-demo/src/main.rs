@@ -2878,16 +2878,33 @@ fn main() {
     let mut yaw: f32 = 0.0;
     let mut pitch: f32 = 0.0;
 
+    // Gamepad manager for controller input.
+    let mut gamepad_mgr = nebula_input::GamepadManager::new();
+
     nebula_app::window::run_with_config_and_input(config, move |dt, kb, ms| {
         use winit::keyboard::{KeyCode, PhysicalKey};
 
         demo_state.update(dt);
+
+        // Poll gamepad events.
+        gamepad_mgr.update();
 
         // Mouse look: apply mouse delta to yaw/pitch.
         let sensitivity = 0.003_f32;
         let delta = ms.delta();
         yaw -= delta.x * sensitivity;
         pitch -= delta.y * sensitivity;
+
+        // Gamepad right stick rotates view.
+        let stick_sensitivity = 2.0_f32; // radians per second at full tilt
+        if let Some(gp_id) = gamepad_mgr.connected_gamepads().next()
+            && let Some(gp) = gamepad_mgr.gamepad(gp_id)
+        {
+            let rs = gp.right_stick();
+            yaw -= rs.x * stick_sensitivity * dt as f32;
+            pitch -= rs.y * stick_sensitivity * dt as f32;
+        }
+
         // Clamp pitch to avoid gimbal lock.
         pitch = pitch.clamp(
             -std::f32::consts::FRAC_PI_2 + 0.01,
@@ -2914,6 +2931,17 @@ fn main() {
         }
         if kb.is_pressed(PhysicalKey::Code(KeyCode::KeyD)) {
             demo_state.position.x += dist;
+        }
+
+        // Gamepad left stick moves camera.
+        if let Some(gp_id) = gamepad_mgr.connected_gamepads().next()
+            && let Some(gp) = gamepad_mgr.gamepad(gp_id)
+        {
+            let ls = gp.left_stick();
+            let gp_dist_x = (speed as f64 * dt * ls.x as f64) as i128;
+            let gp_dist_z = (speed as f64 * dt * -ls.y as f64) as i128;
+            demo_state.position.x += gp_dist_x;
+            demo_state.position.z += gp_dist_z;
         }
     });
 }

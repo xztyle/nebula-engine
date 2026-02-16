@@ -217,6 +217,8 @@ pub struct AppState {
     pub keyboard_state: nebula_input::KeyboardState,
     /// Frame-coherent mouse state.
     pub mouse_state: nebula_input::MouseState,
+    /// Gamepad manager (polls gilrs each frame).
+    pub gamepad_manager: nebula_input::GamepadManager,
 }
 
 impl AppState {
@@ -297,6 +299,7 @@ impl AppState {
             lighting_context_buffer: None,
             keyboard_state: nebula_input::KeyboardState::new(),
             mouse_state: nebula_input::MouseState::new(),
+            gamepad_manager: nebula_input::GamepadManager::new(),
         }
     }
 
@@ -384,6 +387,7 @@ impl AppState {
             lighting_context_buffer: None,
             keyboard_state: nebula_input::KeyboardState::new(),
             mouse_state: nebula_input::MouseState::new(),
+            gamepad_manager: nebula_input::GamepadManager::new(),
         }
     }
 
@@ -1287,6 +1291,9 @@ impl ApplicationHandler for AppState {
                     event_loop.exit();
                     return;
                 }
+
+                // Poll gamepad events before processing the frame.
+                self.gamepad_manager.update();
 
                 let tick_count = &mut self.tick_count;
                 let custom_update = &mut self.custom_update;
