@@ -4093,6 +4093,70 @@ fn demonstrate_world_state_snapshots() {
     info!("World state snapshots demonstration completed successfully");
 }
 
+fn demonstrate_clock_synchronization() {
+    use nebula_multiplayer::{
+        ClockSync, Pong, RttEstimator, TICK_DURATION, TICK_RATE, TickCounter,
+        compute_tick_adjustment,
+    };
+
+    info!("Starting clock synchronization demonstration");
+
+    // Constants.
+    info!(
+        "  TICK_RATE={} Hz, TICK_DURATION={:?}",
+        TICK_RATE, TICK_DURATION
+    );
+
+    // RTT estimator with simulated 50ms samples.
+    let mut rtt = RttEstimator::default();
+    for _ in 0..10 {
+        rtt.record_sample(std::time::Duration::from_millis(50));
+    }
+    info!(
+        "  RttEstimator: {} samples, ewma={:?}, median={:?}",
+        rtt.samples.len(),
+        rtt.ewma_rtt,
+        rtt.median_rtt()
+    );
+
+    // Clock sync with simulated pong responses.
+    let mut sync = ClockSync::default();
+    let rtt_ns: u64 = 50_000_000;
+    for i in 0..10u32 {
+        let send = (i as u64) * 500_000_000;
+        let recv = send + rtt_ns;
+        let pong = Pong {
+            sequence: i,
+            server_tick: (i as u64) * 30,
+        };
+        sync.on_pong_received(&pong, recv, send, (i as u64) * 30);
+    }
+    info!(
+        "  ClockSync: converged={}, tick_offset={}, target_lead={:.2}",
+        sync.converged, sync.tick_offset, sync.target_lead
+    );
+
+    // Tick counter.
+    let mut counter = TickCounter::new(true);
+    for _ in 0..100 {
+        counter.advance();
+    }
+    info!(
+        "  Server tick: {} | Local tick: {} | Offset: {}",
+        100,
+        sync.adjusted_client_tick(counter.tick),
+        sync.tick_offset
+    );
+
+    // Tick adjustment.
+    let adj = compute_tick_adjustment(0.5);
+    info!("  Adjustment for offset_error=0.5: {:?}", adj);
+    let adj2 = compute_tick_adjustment(3.0);
+    info!("  Adjustment for offset_error=3.0: {:?}", adj2);
+
+    info!("Clock synchronization demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -4658,6 +4722,9 @@ fn main() {
 
     // Demonstrate world state snapshots
     demonstrate_world_state_snapshots();
+
+    // Demonstrate clock synchronization
+    demonstrate_clock_synchronization();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {

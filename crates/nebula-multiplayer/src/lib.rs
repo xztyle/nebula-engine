@@ -4,6 +4,7 @@
 pub mod authority;
 pub mod chat;
 pub mod chunk_streaming;
+pub mod clock;
 pub mod interest;
 pub mod player_session;
 pub mod prediction;
@@ -23,6 +24,10 @@ pub use chat::{
 pub use chunk_streaming::{
     ChunkDataMessage, ChunkDecompressError, ChunkId, ChunkSendEntry, ChunkSendQueue,
     ChunkStreamConfig, ClientChunkCache, compress_chunk, decompress_chunk,
+};
+pub use clock::{
+    ClockSync, Ping, Pong, RttEstimator, TICK_DURATION, TICK_RATE, TickAdjustment, TickCounter,
+    compute_tick_adjustment,
 };
 pub use interest::{
     ClientInterestSet, InterestArea, InterestPosition, InterestTransitions, SpatialInterestSystem,
