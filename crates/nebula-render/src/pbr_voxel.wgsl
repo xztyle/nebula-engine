@@ -1,4 +1,4 @@
-// PBR Voxel Shader — Cook-Torrance BRDF with per-vertex material IDs.
+// PBR Voxel Shader — Cook-Torrance BRDF with material blending and triplanar projection.
 
 const PI: f32 = 3.14159265359;
 
@@ -56,8 +56,10 @@ struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
-    @location(3) material_id: u32,
-    @location(4) ao: f32,
+    @location(3) material_id_a: u32,
+    @location(4) material_id_b: u32,
+    @location(5) blend_weight: f32,
+    @location(6) ao: f32,
 };
 
 struct VertexOutput {
@@ -65,8 +67,10 @@ struct VertexOutput {
     @location(0) world_pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
-    @location(3) @interpolate(flat) material_id: u32,
-    @location(4) ao: f32,
+    @location(3) @interpolate(flat) material_id_a: u32,
+    @location(4) @interpolate(flat) material_id_b: u32,
+    @location(5) blend_weight: f32,
+    @location(6) ao: f32,
 };
 
 @vertex
@@ -76,7 +80,9 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.world_pos = in.position;
     out.normal = in.normal;
     out.uv = in.uv;
-    out.material_id = in.material_id;
+    out.material_id_a = in.material_id_a;
+    out.material_id_b = in.material_id_b;
+    out.blend_weight = in.blend_weight;
     out.ao = in.ao;
     return out;
 }
@@ -118,20 +124,73 @@ fn shadow_factor(world_pos: vec3<f32>) -> f32 {
     return textureSampleCompare(shadow_map, shadow_sampler, shadow_uv, proj.z);
 }
 
+// --- Triplanar Sampling ---
+
+fn triplanar_sample(
+    world_pos: vec3<f32>,
+    normal: vec3<f32>,
+    uv_offset: vec2<f32>,
+    tile_scale: f32,
+) -> vec4<f32> {
+    // Compute blend weights from the absolute normal components
+    var blend = abs(normal);
+    // Sharpen the blend to reduce the transition band
+    blend = pow(blend, vec3<f32>(4.0));
+    // Normalize so weights sum to 1.0
+    blend = blend / (blend.x + blend.y + blend.z);
+
+    // Sample along each axis projection
+    let uv_x = fract(world_pos.yz * tile_scale) + uv_offset;
+    let uv_y = fract(world_pos.xz * tile_scale) + uv_offset;
+    let uv_z = fract(world_pos.xy * tile_scale) + uv_offset;
+
+    let tex_x = textureSample(atlas_texture, atlas_sampler, uv_x);
+    let tex_y = textureSample(atlas_texture, atlas_sampler, uv_y);
+    let tex_z = textureSample(atlas_texture, atlas_sampler, uv_z);
+
+    return tex_x * blend.x + tex_y * blend.y + tex_z * blend.z;
+}
+
 // --- Fragment ---
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let mat = materials[in.material_id];
+    let mat_a = materials[in.material_id_a];
+    let mat_b = materials[in.material_id_b];
 
-    let anim = anim_data[in.material_id];
-    let animated_uv = in.uv + anim.uv_offset;
-    let tex_color = textureSample(atlas_texture, atlas_sampler, animated_uv);
-    let albedo = tex_color.rgb * mat.albedo.rgb;
-    let metallic = mat.metallic;
-    let roughness = max(mat.roughness, 0.04);
+    let anim_a = anim_data[in.material_id_a];
+    let anim_b = anim_data[in.material_id_b];
 
     let n = normalize(in.normal);
+
+    // Determine if triplanar projection is needed.
+    // Use triplanar when the dominant normal component is < 0.7 (slope > ~45 degrees)
+    let max_component = max(abs(n.x), max(abs(n.y), abs(n.z)));
+    let use_triplanar = max_component < 0.7;
+
+    var tex_a: vec4<f32>;
+    var tex_b: vec4<f32>;
+
+    if use_triplanar {
+        tex_a = triplanar_sample(in.world_pos, n, anim_a.uv_offset, 1.0);
+        tex_b = triplanar_sample(in.world_pos, n, anim_b.uv_offset, 1.0);
+    } else {
+        let animated_uv_a = in.uv + anim_a.uv_offset;
+        let animated_uv_b = in.uv + anim_b.uv_offset;
+        tex_a = textureSample(atlas_texture, atlas_sampler, animated_uv_a);
+        tex_b = textureSample(atlas_texture, atlas_sampler, animated_uv_b);
+    }
+
+    // Blend between material A and material B
+    let w = in.blend_weight;
+    let albedo = mix(tex_a.rgb * mat_a.albedo.rgb, tex_b.rgb * mat_b.albedo.rgb, w);
+    let metallic = mix(mat_a.metallic, mat_b.metallic, w);
+    let roughness = max(mix(mat_a.roughness, mat_b.roughness, w), 0.04);
+    let emissive_a = mat_a.emissive_rgb_intensity.rgb * mat_a.emissive_rgb_intensity.w;
+    let emissive_b = mat_b.emissive_rgb_intensity.rgb * mat_b.emissive_rgb_intensity.w;
+    let emissive = mix(emissive_a, emissive_b, w);
+    let opacity = mix(mat_a.opacity, mat_b.opacity, w);
+
     let v = normalize(camera.camera_pos.xyz - in.world_pos);
     let l = normalize(-light.sun_direction.xyz);
     let h = normalize(v + l);
@@ -161,9 +220,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let ambient = light.ambient_color.rgb * light.ambient_color.w * albedo * in.ao;
 
-    let emissive = mat.emissive_rgb_intensity.rgb * mat.emissive_rgb_intensity.w;
-
     let color = lo + ambient + emissive;
 
-    return vec4<f32>(color, mat.opacity);
+    return vec4<f32>(color, opacity);
 }

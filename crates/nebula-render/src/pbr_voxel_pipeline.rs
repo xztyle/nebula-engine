@@ -298,13 +298,13 @@ mod tests {
 
     #[test]
     fn test_voxel_vertex_size() {
-        assert_eq!(std::mem::size_of::<VoxelVertex>(), 40);
+        assert_eq!(std::mem::size_of::<VoxelVertex>(), 48);
     }
 
     #[test]
     fn test_pipeline_compatible_with_chunk_vertex_format() {
         let layout = VoxelVertex::vertex_buffer_layout();
-        assert_eq!(layout.attributes.len(), 5);
+        assert_eq!(layout.attributes.len(), 7);
         assert_eq!(layout.attributes[0].shader_location, 0);
         assert_eq!(layout.attributes[0].format, wgpu::VertexFormat::Float32x3);
         assert_eq!(layout.attributes[0].offset, 0);
@@ -318,9 +318,15 @@ mod tests {
         assert_eq!(layout.attributes[3].format, wgpu::VertexFormat::Uint32);
         assert_eq!(layout.attributes[3].offset, 32);
         assert_eq!(layout.attributes[4].shader_location, 4);
-        assert_eq!(layout.attributes[4].format, wgpu::VertexFormat::Float32);
+        assert_eq!(layout.attributes[4].format, wgpu::VertexFormat::Uint32);
         assert_eq!(layout.attributes[4].offset, 36);
-        assert_eq!(layout.array_stride, 40);
+        assert_eq!(layout.attributes[5].shader_location, 5);
+        assert_eq!(layout.attributes[5].format, wgpu::VertexFormat::Float32);
+        assert_eq!(layout.attributes[5].offset, 40);
+        assert_eq!(layout.attributes[6].shader_location, 6);
+        assert_eq!(layout.attributes[6].format, wgpu::VertexFormat::Float32);
+        assert_eq!(layout.attributes[6].offset, 44);
+        assert_eq!(layout.array_stride, 48);
     }
 
     #[test]

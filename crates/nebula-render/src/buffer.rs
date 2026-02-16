@@ -196,10 +196,10 @@ impl VertexPositionNormalUv {
     }
 }
 
-/// PBR voxel vertex with position, normal, UV, material ID, and ambient occlusion.
+/// PBR voxel vertex with position, normal, UV, dual material IDs, blend weight, and AO.
 ///
-/// Used by [`crate::PbrVoxelPipeline`] for per-vertex material lookups.
-/// Total stride: 40 bytes.
+/// Used by [`crate::PbrVoxelPipeline`] for per-vertex material lookups and
+/// biome-boundary blending. Total stride: 48 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct VoxelVertex {
@@ -209,8 +209,12 @@ pub struct VoxelVertex {
     pub normal: [f32; 3],
     /// Texture atlas UV coordinates.
     pub uv: [f32; 2],
-    /// Index into the material storage buffer.
-    pub material_id: u32,
+    /// Primary material index into the material storage buffer.
+    pub material_id_a: u32,
+    /// Secondary material index (equals `material_id_a` when not at a boundary).
+    pub material_id_b: u32,
+    /// Blend weight between material A and B: 0.0 = A only, 1.0 = B only.
+    pub blend_weight: f32,
     /// Ambient occlusion factor \[0.0, 1.0\].
     pub ao: f32,
 }
@@ -224,29 +228,46 @@ impl VoxelVertex {
             array_stride: std::mem::size_of::<VoxelVertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
+                // location(0): position
                 VertexAttribute {
                     offset: 0,
                     shader_location: 0,
                     format: VertexFormat::Float32x3,
                 },
+                // location(1): normal
                 VertexAttribute {
                     offset: 12,
                     shader_location: 1,
                     format: VertexFormat::Float32x3,
                 },
+                // location(2): uv
                 VertexAttribute {
                     offset: 24,
                     shader_location: 2,
                     format: VertexFormat::Float32x2,
                 },
+                // location(3): material_id_a
                 VertexAttribute {
                     offset: 32,
                     shader_location: 3,
                     format: VertexFormat::Uint32,
                 },
+                // location(4): material_id_b
                 VertexAttribute {
                     offset: 36,
                     shader_location: 4,
+                    format: VertexFormat::Uint32,
+                },
+                // location(5): blend_weight
+                VertexAttribute {
+                    offset: 40,
+                    shader_location: 5,
+                    format: VertexFormat::Float32,
+                },
+                // location(6): ao
+                VertexAttribute {
+                    offset: 44,
+                    shader_location: 6,
                     format: VertexFormat::Float32,
                 },
             ],
@@ -396,5 +417,28 @@ mod tests {
         // position (f32×3) + normal (f32×3) + uv (f32×2) = 32 bytes stride
         assert_eq!(layout.array_stride, 32);
         assert_eq!(layout.attributes.len(), 3);
+    }
+
+    #[test]
+    fn test_extended_vertex_size() {
+        // Extended vertex with two material IDs and blend weight = 48 bytes
+        assert_eq!(std::mem::size_of::<VoxelVertex>(), 48);
+    }
+
+    #[test]
+    fn test_non_blended_vertex_defaults() {
+        // A vertex at a non-boundary location should have material_id_b == material_id_a
+        // and blend_weight == 0.0
+        let vertex = VoxelVertex {
+            position: [0.0; 3],
+            normal: [0.0, 1.0, 0.0],
+            uv: [0.0; 2],
+            material_id_a: 5,
+            material_id_b: 5,
+            blend_weight: 0.0,
+            ao: 1.0,
+        };
+        assert_eq!(vertex.material_id_a, vertex.material_id_b);
+        assert_eq!(vertex.blend_weight, 0.0);
     }
 }
