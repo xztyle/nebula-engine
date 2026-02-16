@@ -21,6 +21,7 @@ Nebula Engine is an AI-friendly voxel game engine written in Rust. Built to powe
   - `curl http://localhost:9999/health` (verify engine is alive)
   - `curl http://localhost:9999/metrics` (check FPS, frame time, no regressions)
   - `curl http://localhost:9999/screenshot --output /tmp/nebula-screenshot.png` (capture visual state)
+  - **Verify the screenshot is not just a black frame** -- check file size > 10KB or inspect pixels
   - Kill the demo process after validation
   - **This is mandatory for every story. No exceptions.**
 - No `unwrap()` in library code -- use `Result`/`Option` properly
