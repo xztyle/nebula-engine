@@ -84,6 +84,11 @@ pub type CustomInputUpdateFn = Box<
     ),
 >;
 
+/// Callback invoked each frame to produce a dynamic window title (e.g. HUD overlay).
+///
+/// Returns the desired window title string. Applied after the simulation tick.
+pub type WindowTitleFn = Box<dyn FnMut() -> String>;
+
 /// Application state that manages the window, GPU context, and tracks surface dimensions.
 pub struct AppState {
     /// The window handle, wrapped in `Arc` for sharing with the renderer.
@@ -102,6 +107,8 @@ pub struct AppState {
     pub custom_update: Option<CustomUpdateFn>,
     /// Optional custom update with keyboard state, called each simulation tick.
     pub custom_input_update: Option<CustomInputUpdateFn>,
+    /// Optional callback to produce a dynamic window title each frame (e.g. HUD info).
+    pub window_title_fn: Option<WindowTitleFn>,
     /// Engine configuration.
     pub config: Config,
     /// Debug server (only in debug builds).
@@ -246,6 +253,7 @@ impl AppState {
             clear_color_fn: None,
             custom_update: None,
             custom_input_update: None,
+            window_title_fn: None,
             config: Config::default(),
             debug_server,
             debug_state,
@@ -334,6 +342,7 @@ impl AppState {
             clear_color_fn: None,
             custom_update: None,
             custom_input_update: None,
+            window_title_fn: None,
             config,
             debug_server,
             debug_state,
@@ -1447,6 +1456,14 @@ impl ApplicationHandler for AppState {
                     |_alpha| {},
                 );
 
+                // Update window title from callback (e.g. HUD overlay)
+                if let Some(ref mut title_fn) = self.window_title_fn {
+                    let title = title_fn();
+                    if let Some(ref window) = self.window {
+                        window.set_title(&title);
+                    }
+                }
+
                 if let Some(gpu) = &self.gpu {
                     let clear_color = if let Some(ref mut f) = self.clear_color_fn {
                         f(self.tick_count)
@@ -2356,6 +2373,31 @@ where
     app.custom_input_update = Some(Box::new(move |dt, kb, ms, cam| {
         custom_state(dt, kb, ms, cam);
     }));
+
+    event_loop.run_app(&mut app).expect("Event loop failed");
+}
+
+/// Run the engine with a custom input callback and a dynamic window title callback.
+///
+/// The `title_fn` is called each frame after the simulation tick and its return
+/// value is set as the window title (useful for HUD overlays).
+pub fn run_with_config_input_and_title<T, F>(config: Config, mut custom_state: T, title_fn: F)
+where
+    T: FnMut(
+            f64,
+            &nebula_input::KeyboardState,
+            &nebula_input::MouseState,
+            &mut nebula_render::Camera,
+        ) + 'static,
+    F: FnMut() -> String + 'static,
+{
+    let event_loop = EventLoop::new().expect("Failed to create event loop");
+    let mut app = AppState::with_config(config);
+
+    app.custom_input_update = Some(Box::new(move |dt, kb, ms, cam| {
+        custom_state(dt, kb, ms, cam);
+    }));
+    app.window_title_fn = Some(Box::new(title_fn));
 
     event_loop.run_app(&mut app).expect("Event loop failed");
 }

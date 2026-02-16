@@ -6,12 +6,17 @@
 //!
 //! Run with: `cargo run -p nebula-game`
 
+mod hud;
 mod planet;
 mod ship;
+
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use clap::Parser;
 use nebula_config::Config;
 use tracing::info;
+use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// CLI arguments for the game binary.
 #[derive(Parser, Debug)]
@@ -73,11 +78,37 @@ fn main() {
         ship_state.position.z,
     );
 
-    // Run the engine: opens window, initializes wgpu, starts debug API on :9999,
-    // and enters the fixed-timestep game loop.
-    // The callback receives mutable camera access so the ship controls it directly.
-    nebula_app::window::run_with_config_and_input(config, move |dt, keyboard, mouse, camera| {
-        ship::update_ship(&mut ship_state, &ship_config, dt, keyboard, mouse);
-        ship::sync_camera_to_ship(camera, &ship_state);
-    });
+    let planet_radius_m = config.planet.radius_m;
+
+    // Shared HUD state between the update and title callbacks.
+    let hud_state = Rc::new(RefCell::new(hud::HudState::default()));
+    let hud_for_title = Rc::clone(&hud_state);
+
+    // Run the engine with both a custom input callback and a HUD title callback.
+    nebula_app::window::run_with_config_input_and_title(
+        config,
+        move |dt, keyboard, mouse, camera| {
+            // Detect thrust and boost state for HUD throttle display.
+            let is_thrusting = keyboard.is_pressed(PhysicalKey::Code(KeyCode::KeyW))
+                || keyboard.is_pressed(PhysicalKey::Code(KeyCode::KeyS))
+                || keyboard.is_pressed(PhysicalKey::Code(KeyCode::KeyA))
+                || keyboard.is_pressed(PhysicalKey::Code(KeyCode::KeyD))
+                || keyboard.is_pressed(PhysicalKey::Code(KeyCode::Space))
+                || keyboard.is_pressed(PhysicalKey::Code(KeyCode::ShiftLeft));
+            let is_boosting = keyboard.is_pressed(PhysicalKey::Code(KeyCode::ControlLeft));
+
+            ship::update_ship(&mut ship_state, &ship_config, dt, keyboard, mouse);
+            ship::sync_camera_to_ship(camera, &ship_state);
+
+            // Update HUD telemetry.
+            hud::update_hud(
+                &mut hud_state.borrow_mut(),
+                &ship_state,
+                planet_radius_m,
+                is_thrusting,
+                is_boosting,
+            );
+        },
+        move || hud::format_hud(&hud_for_title.borrow()),
+    );
 }
