@@ -2562,6 +2562,50 @@ fn demonstrate_physics_world() {
     info!("Physics world demonstration completed successfully");
 }
 
+/// Demonstrates physics island management: spatial partitioning for bounded simulation.
+fn demonstrate_physics_island() {
+    use nebula_physics::PhysicsIsland;
+
+    info!("Starting physics island demonstration");
+
+    let mut island = PhysicsIsland::new();
+    info!(
+        "Physics island created: radius={}m, hysteresis={}m",
+        island.radius, island.hysteresis
+    );
+
+    // Test configurable radius
+    island.set_radius(256.0);
+    info!(
+        "After set_radius(256): radius={}m, hysteresis={}m",
+        island.radius, island.hysteresis
+    );
+    assert_eq!(island.radius, 256.0);
+    assert_eq!(island.hysteresis, 8.0);
+
+    // Test distance calculation
+    let a = WorldPosition::new(0, 0, 0);
+    let b = WorldPosition::new(100_000, 0, 0); // 100m in mm
+    let dist = PhysicsIsland::distance_meters(&a, &b);
+    info!("Distance (0,0,0) to (100m,0,0) = {:.1}m", dist);
+    assert!((dist - 100.0).abs() < 0.01);
+
+    // Test hysteresis logic
+    island.set_radius(512.0);
+    assert!(island.should_enter(500.0)); // inside radius
+    assert!(!island.should_enter(600.0)); // outside radius
+    assert!(!island.should_leave(520.0)); // inside hysteresis band
+    assert!(island.should_leave(530.0)); // outside hysteresis band (512+16=528)
+
+    info!(
+        "Physics island: {} active entities, {} active chunks",
+        island.active_entities.len(),
+        island.active_chunks.len()
+    );
+
+    info!("Physics island demonstration completed successfully");
+}
+
 /// Configure system ordering constraints for all engine stages.
 fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
@@ -2732,11 +2776,15 @@ fn main() {
     // Demonstrate physics world initialization and stepping
     demonstrate_physics_world();
 
+    // Demonstrate physics island management
+    demonstrate_physics_island();
+
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
     ecs_world.insert_resource(nebula_ecs::CameraRes::default());
     ecs_world.insert_resource(nebula_player::FloatingOrigin::default());
     ecs_world.insert_resource(nebula_physics::PhysicsWorld::new());
+    ecs_world.insert_resource(nebula_physics::PhysicsIsland::new());
     ecs_world.insert_resource(nebula_ecs::SpawnQueue::default());
     ecs_world.insert_resource(nebula_ecs::DespawnQueue::default());
     let mut ecs_schedules = nebula_ecs::EngineSchedules::new();

@@ -8,3 +8,5 @@ license.workspace = true
 rapier3d = "0.32"
 bevy_ecs = { workspace = true }
 glam = { workspace = true }
+nebula-math = { path = "../nebula-math" }
+tracing = "0.1"

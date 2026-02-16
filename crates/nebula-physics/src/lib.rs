@@ -3,6 +3,13 @@
 //! Wraps the Rapier 3D physics engine behind a single [`PhysicsWorld`] resource
 //! that owns all simulation state and exposes a minimal, engine-friendly API.
 
+pub mod physics_island;
+
+pub use physics_island::{
+    ChunkCoord, FrozenPhysicsState, IslandPlayer, IslandWorldPos, PhysicsEligible, PhysicsIsland,
+    RigidBodyHandle, physics_island_update_system,
+};
+
 use bevy_ecs::prelude::*;
 use rapier3d::prelude::*;
 
