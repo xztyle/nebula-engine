@@ -6,4 +6,5 @@ license.workspace = true
 
 [dependencies]
 tokio = { version = "1.49", features = ["net", "rt-multi-thread", "io-util", "macros", "sync", "time"] }
+thiserror = "2.0"
 tracing = "0.1"
