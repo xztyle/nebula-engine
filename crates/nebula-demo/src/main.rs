@@ -1079,6 +1079,70 @@ fn demonstrate_gpu_mesh_upload() -> (u64, u64, bool) {
     (upload_bytes, pool_allocated, reused)
 }
 
+/// Demonstrates async mesh generation using the [`MeshingPipeline`].
+///
+/// Submits multiple chunks to background threads and collects results,
+/// verifying that meshing completes without blocking the main thread.
+fn demonstrate_async_meshing() -> (usize, usize) {
+    use nebula_mesh::{ChunkNeighborhood, MeshingPipeline, MeshingTask};
+    use nebula_voxel::{ChunkAddress, ChunkData, VoxelTypeId};
+    use std::sync::Arc;
+
+    info!("Starting async mesh generation demonstration");
+
+    let mut reg = VoxelTypeRegistry::new();
+    let _ = reg.register(VoxelTypeDef {
+        name: "stone".to_string(),
+        transparency: nebula_voxel::Transparency::Opaque,
+        solid: true,
+        material_index: 0,
+        light_emission: 0,
+    });
+    let registry = Arc::new(reg);
+
+    let mut pipeline = MeshingPipeline::new(2, 8, registry);
+
+    // Submit 4 chunks for async meshing.
+    let chunk_count = 4usize;
+    for i in 0..chunk_count {
+        let mut chunk = ChunkData::new(VoxelTypeId(0));
+        // Place a stone block so each chunk produces a non-empty mesh.
+        chunk.set(16, 16, 16, VoxelTypeId(1));
+        let neighborhood = ChunkNeighborhood::from_center_only(chunk);
+        let task = MeshingTask {
+            chunk_addr: ChunkAddress::new(i as i64, 0, 0, 0),
+            neighborhood,
+            data_version: 1,
+        };
+        assert!(pipeline.submit(task), "Failed to submit meshing task {i}");
+    }
+
+    // Collect results (with timeout).
+    let mut results = Vec::new();
+    let start = std::time::Instant::now();
+    while results.len() < chunk_count {
+        results.extend(pipeline.drain_results());
+        assert!(
+            start.elapsed().as_secs() < 10,
+            "Timed out waiting for async mesh results"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+
+    let total_quads: usize = results.iter().map(|r| r.mesh.quad_count()).sum();
+
+    info!(
+        "Async meshing: {} chunks meshed, {} total quads",
+        results.len(),
+        total_quads
+    );
+
+    pipeline.shutdown();
+
+    info!("Async mesh generation demonstration completed successfully");
+    (results.len(), total_quads)
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -1169,6 +1233,9 @@ fn main() {
     // Demonstrate GPU mesh upload and buffer pool
     let (gpu_upload_bytes, pool_allocated, gpu_reused) = demonstrate_gpu_mesh_upload();
 
+    // Demonstrate async mesh generation
+    let (async_chunks, async_quads) = demonstrate_async_meshing();
+
     // Log initial state
     let mut demo_state = DemoState::new();
     let initial_sector = SectorCoord::from_world(&demo_state.position);
@@ -1190,7 +1257,7 @@ fn main() {
         total_faces,
     );
     config.window.title = format!(
-        "{} - Greedy: {} quads (was {}) - AO: {}/{} ({} shaded) - AdjCull: {}/{} - GPU: {}B pool:{}B reuse:{}",
+        "{} - Greedy: {} quads (was {}) - AO: {}/{} ({} shaded) - AdjCull: {}/{} - GPU: {}B pool:{}B reuse:{} - Async: {}chunks/{}quads",
         config.window.title,
         greedy_quads,
         naive_quads,
@@ -1202,6 +1269,8 @@ fn main() {
         gpu_upload_bytes,
         pool_allocated,
         gpu_reused,
+        async_chunks,
+        async_quads,
     );
 
     info!(

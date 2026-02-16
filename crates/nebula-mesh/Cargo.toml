@@ -8,3 +8,4 @@ license.workspace = true
 nebula-voxel = { path = "../nebula-voxel" }
 bytemuck = { workspace = true }
 static_assertions = { workspace = true }
+crossbeam-channel = { workspace = true }

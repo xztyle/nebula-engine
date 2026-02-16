@@ -1,6 +1,7 @@
 //! Meshing algorithms: greedy meshing, ambient occlusion, LOD stitching, and mesh data structures.
 
 pub mod ambient_occlusion;
+pub mod async_mesh;
 pub mod chunk_mesh;
 pub mod face_direction;
 pub mod greedy;
@@ -19,3 +20,5 @@ pub use neighborhood::{
 pub use packed::{ChunkVertex, PackedChunkMesh};
 pub use visibility::{compute_visible_faces, count_total_faces, count_visible_faces};
 pub use visible_faces::VisibleFaces;
+
+pub use async_mesh::{MeshingPipeline, MeshingResult, MeshingTask};
