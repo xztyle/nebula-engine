@@ -14,7 +14,10 @@ use nebula_mesh::{
     ChunkNeighborhood, EdgeDirection, FaceDirection, compute_face_ao, compute_visible_faces,
     count_total_faces, count_visible_faces, greedy_mesh, vertex_ao,
 };
-use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
+use nebula_render::{
+    Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, GpuBufferPool, GpuChunkMesh, ShaderLibrary,
+    load_shader,
+};
 use nebula_voxel::{
     Chunk, ChunkAddress, ChunkData, ChunkLoadConfig, ChunkLoader, ChunkManager, Transparency,
     VoxelEventBuffer, VoxelTypeDef, VoxelTypeId, VoxelTypeRegistry, set_voxel, set_voxels_batch,
@@ -970,6 +973,112 @@ fn demonstrate_adjacent_chunk_culling() -> (u32, u32) {
     (visible_without, visible_with)
 }
 
+/// Demonstrates GPU mesh upload and buffer pool reuse.
+fn demonstrate_gpu_mesh_upload() -> (u64, u64, bool) {
+    use nebula_mesh::{ChunkVertex, FaceDirection, PackedChunkMesh};
+
+    info!("Starting GPU mesh upload demonstration");
+
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        ..Default::default()
+    });
+
+    let adapter = pollster::block_on(async {
+        instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            })
+            .await
+            .expect("Failed to find adapter")
+    });
+
+    let (device, queue) = pollster::block_on(async {
+        adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: None,
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: wgpu::MemoryHints::default(),
+                experimental_features: Default::default(),
+                ..Default::default()
+            })
+            .await
+            .expect("Failed to create device")
+    });
+
+    // Build a packed mesh with 100 quads (simulating a small chunk surface)
+    let mut mesh = PackedChunkMesh::new();
+    for i in 0..10u8 {
+        for j in 0..10u8 {
+            mesh.push_quad(
+                [
+                    ChunkVertex::new([i, 0, j], FaceDirection::PosY, 0, 1, [0, 0]),
+                    ChunkVertex::new([i + 1, 0, j], FaceDirection::PosY, 0, 1, [1, 0]),
+                    ChunkVertex::new([i + 1, 0, j + 1], FaceDirection::PosY, 0, 1, [1, 1]),
+                    ChunkVertex::new([i, 0, j + 1], FaceDirection::PosY, 0, 1, [0, 1]),
+                ],
+                false,
+            );
+        }
+    }
+
+    // Upload to GPU
+    let mut gpu_mesh = GpuChunkMesh::upload(&device, &mesh);
+    let upload_bytes = gpu_mesh.total_gpu_bytes();
+    info!(
+        "Uploaded mesh: {} vertices, {} indices, {} bytes on GPU",
+        gpu_mesh.vertex_count, gpu_mesh.index_count, upload_bytes
+    );
+
+    // Re-upload a smaller mesh (simulating remesh after block edit)
+    let mut small_mesh = PackedChunkMesh::new();
+    for i in 0..5u8 {
+        small_mesh.push_quad(
+            [
+                ChunkVertex::new([i, 0, 0], FaceDirection::PosY, 0, 1, [0, 0]),
+                ChunkVertex::new([i + 1, 0, 0], FaceDirection::PosY, 0, 1, [1, 0]),
+                ChunkVertex::new([i + 1, 0, 1], FaceDirection::PosY, 0, 1, [1, 1]),
+                ChunkVertex::new([i, 0, 1], FaceDirection::PosY, 0, 1, [0, 1]),
+            ],
+            false,
+        );
+    }
+    let reused = gpu_mesh.reupload(&device, &queue, &small_mesh);
+    info!(
+        "Reupload (smaller mesh): reused existing buffers = {}",
+        reused
+    );
+
+    // Demonstrate buffer pool
+    let mut pool = GpuBufferPool::new();
+    let (vb, vc) = pool.acquire_vertex_buffer(&device, 1000);
+    let (ib, ic) = pool.acquire_index_buffer(&device, 500);
+    let pool_allocated = pool.gpu_memory_allocated();
+    let pool_in_use = pool.gpu_memory_in_use();
+    info!(
+        "Buffer pool: allocated={} bytes, in_use={} bytes",
+        pool_allocated, pool_in_use
+    );
+
+    // Release and re-acquire to show reuse
+    pool.release_vertex_buffer(vb, vc);
+    pool.release_index_buffer(ib, ic);
+    let (_vb2, _) = pool.acquire_vertex_buffer(&device, 1000);
+    let (_ib2, _) = pool.acquire_index_buffer(&device, 500);
+    let pool_allocated_after = pool.gpu_memory_allocated();
+    info!(
+        "After release+reacquire: allocated={} bytes (unchanged={})",
+        pool_allocated_after,
+        pool_allocated == pool_allocated_after
+    );
+
+    info!("GPU mesh upload demonstration completed successfully");
+    (upload_bytes, pool_allocated, reused)
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -1057,6 +1166,9 @@ fn main() {
     // Demonstrate adjacent chunk culling
     let (faces_no_neighbor, faces_with_neighbor) = demonstrate_adjacent_chunk_culling();
 
+    // Demonstrate GPU mesh upload and buffer pool
+    let (gpu_upload_bytes, pool_allocated, gpu_reused) = demonstrate_gpu_mesh_upload();
+
     // Log initial state
     let mut demo_state = DemoState::new();
     let initial_sector = SectorCoord::from_world(&demo_state.position);
@@ -1078,7 +1190,7 @@ fn main() {
         total_faces,
     );
     config.window.title = format!(
-        "{} - Greedy: {} quads (was {}) - AO: {}/{} ({} shaded) - AdjCull: {}/{}",
+        "{} - Greedy: {} quads (was {}) - AO: {}/{} ({} shaded) - AdjCull: {}/{} - GPU: {}B pool:{}B reuse:{}",
         config.window.title,
         greedy_quads,
         naive_quads,
@@ -1086,7 +1198,10 @@ fn main() {
         ao_occluded,
         ao_shaded_verts,
         faces_with_neighbor,
-        faces_no_neighbor
+        faces_no_neighbor,
+        gpu_upload_bytes,
+        pool_allocated,
+        gpu_reused,
     );
 
     info!(
