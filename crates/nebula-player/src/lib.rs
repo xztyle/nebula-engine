@@ -1,11 +1,16 @@
 //! Camera controllers, player physics bridge, and player state management.
 
 pub mod first_person_camera;
+pub mod floating_origin;
 pub mod spaceship_controller;
 pub mod third_person_camera;
 
 pub use first_person_camera::{
     FirstPersonCamera, first_person_look_system, first_person_move_system,
+};
+pub use floating_origin::{
+    ActiveCamera, FloatingOrigin, build_local_position_schedule, recompute_local_positions_system,
+    update_floating_origin_system,
 };
 pub use spaceship_controller::{
     SpaceshipController, apply_velocity_system, spaceship_rotation_system, spaceship_thrust_system,

@@ -2430,6 +2430,37 @@ fn demonstrate_lod_memory_budget() {
 }
 
 /// Demonstrates horizon culling: chunks below the planet's horizon are culled.
+/// Demonstrates the 128-bit floating-origin bridge.
+///
+/// Camera and entity are both at galactic-scale coordinates (50 light-years).
+/// Subtraction in i128 keeps the local-space delta millimetre-precise.
+fn demonstrate_floating_origin() {
+    use nebula_coords::WorldPosition;
+
+    info!("Starting floating origin demonstration");
+
+    let ly_mm: i128 = 9_460_730_472_580_800_000; // 1 light-year in mm
+    let origin =
+        nebula_player::FloatingOrigin(WorldPosition::new(50 * ly_mm, 50 * ly_mm, 50 * ly_mm));
+
+    // Entity is 0.5 m from the camera at 50 ly.
+    let entity = nebula_ecs::WorldPos::new(50 * ly_mm + 500, 50 * ly_mm - 300, 50 * ly_mm + 100);
+    let delta = entity.0 - origin.0;
+    let local_x = delta.x as f32;
+    let local_y = delta.y as f32;
+    let local_z = delta.z as f32;
+
+    assert!(
+        (local_x - 500.0).abs() < 1e-6,
+        "Floating origin precision: expected 500.0, got {}",
+        local_x,
+    );
+    info!(
+        "Floating origin at 50 ly: local delta = ({}, {}, {}) — no jitter ✓",
+        local_x, local_y, local_z,
+    );
+}
+
 fn demonstrate_horizon_culling() {
     use glam::DVec3;
     use nebula_lod::HorizonCuller;
@@ -2654,10 +2685,12 @@ fn main() {
 
     // Demonstrate horizon culling
     demonstrate_horizon_culling();
+    demonstrate_floating_origin();
 
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
     ecs_world.insert_resource(nebula_ecs::CameraRes::default());
+    ecs_world.insert_resource(nebula_player::FloatingOrigin::default());
     ecs_world.insert_resource(nebula_ecs::SpawnQueue::default());
     ecs_world.insert_resource(nebula_ecs::DespawnQueue::default());
     let mut ecs_schedules = nebula_ecs::EngineSchedules::new();
@@ -2698,6 +2731,17 @@ fn main() {
     ecs_schedules.add_system(
         nebula_ecs::EngineSchedule::PostUpdate,
         nebula_ecs::update_all_local_positions_on_camera_move
+            .in_set(nebula_ecs::PostUpdateSet::TransformPropagation),
+    );
+    // Floating origin: camera-driven origin update → local position recomputation.
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::PostUpdate,
+        nebula_player::update_floating_origin_system
+            .in_set(nebula_ecs::PostUpdateSet::TransformPropagation),
+    );
+    ecs_schedules.add_system(
+        nebula_ecs::EngineSchedule::PostUpdate,
+        nebula_player::recompute_local_positions_system
             .in_set(nebula_ecs::PostUpdateSet::TransformPropagation),
     );
     ecs_schedules.add_system(
