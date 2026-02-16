@@ -10,7 +10,7 @@ use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldP
 use nebula_cubesphere::{
     ChunkAddress, CubeCorner, CubeFace, FaceCoord, FaceDirection, FaceQuadtree, LodNeighbor,
     SameFaceNeighbor, corner_lod_valid, direction_to_face, face_coord_to_sphere_everitt,
-    sphere_to_face_coord_everitt,
+    face_uv_to_world_position, sphere_to_face_coord_everitt, world_position_to_face_uv,
 };
 use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
 use rand::{Rng, SeedableRng};
@@ -480,6 +480,49 @@ fn demonstrate_corner_neighbors() {
     info!("Cross-face corner neighbor demonstration completed successfully");
 }
 
+/// Demonstrates face-UV-to-world-position conversion by simulating a click
+/// on the sphere surface and logging the resulting `WorldPosition`.
+fn demonstrate_face_uv_to_world() {
+    info!("Starting face UV to world position demonstration");
+
+    let earth_radius: i128 = 6_371_000_000; // mm
+    let planet_center = WorldPosition::new(0, 0, 0);
+
+    // Simulate clicking on the PosX face at (0.5, 0.5) -- face center
+    let fc = FaceCoord::new(CubeFace::PosX, 0.5, 0.5);
+    let world_pos = face_uv_to_world_position(&fc, earth_radius, 0, &planet_center);
+    info!("Clicked: {world_pos}");
+
+    // Roundtrip: world position back to face UV
+    let (fc_back, height_back) =
+        world_position_to_face_uv(&world_pos, earth_radius, &planet_center);
+    info!(
+        "Roundtrip: face={:?} u={:.6} v={:.6} height={} mm",
+        fc_back.face, fc_back.u, fc_back.v, height_back
+    );
+
+    // Test with terrain height (e.g., a 1 km mountain)
+    let mountain_height: i64 = 1_000_000; // 1 km in mm
+    let fc_mountain = FaceCoord::new(CubeFace::PosY, 0.3, 0.7);
+    let pos_mountain =
+        face_uv_to_world_position(&fc_mountain, earth_radius, mountain_height, &planet_center);
+    info!("Mountain top: {pos_mountain}");
+
+    // Verify all 6 face centers
+    for face in CubeFace::ALL {
+        let fc_face = FaceCoord::new(face, 0.5, 0.5);
+        let pos = face_uv_to_world_position(&fc_face, earth_radius, 0, &planet_center);
+        let dist =
+            ((pos.x as f64).powi(2) + (pos.y as f64).powi(2) + (pos.z as f64).powi(2)).sqrt();
+        info!(
+            "  {face:?} center: {pos} (dist from center: {:.0} mm)",
+            dist
+        );
+    }
+
+    info!("Face UV to world position demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -521,6 +564,9 @@ fn main() {
 
     // Demonstrate cross-face corner neighbors
     demonstrate_corner_neighbors();
+
+    // Demonstrate face UV to world position conversion
+    demonstrate_face_uv_to_world();
 
     // Log initial state
     let mut demo_state = DemoState::new();

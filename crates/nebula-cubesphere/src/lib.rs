@@ -10,6 +10,7 @@ mod inverse;
 mod neighbor;
 mod projection;
 mod quadtree;
+mod world_conv;
 
 pub use bounds::{BoundingSphere, ChunkAABB, WorldAABB, WorldBoundingSphere};
 pub use chunk_address::ChunkAddress;
@@ -27,3 +28,6 @@ pub use projection::{
     face_coord_to_sphere_everitt, project,
 };
 pub use quadtree::{FaceQuadtree, QuadNode};
+pub use world_conv::{
+    face_grid_to_world_positions, face_uv_to_world_position, world_position_to_face_uv,
+};
