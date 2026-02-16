@@ -26,3 +26,4 @@ nebula-mesh = { path = "../nebula-mesh" }
 nebula-ecs = { path = "../nebula-ecs" }
 nebula-terrain = { path = "../nebula-terrain" }
 bevy_ecs = { workspace = true }
+hashbrown = "0.15"

@@ -11,3 +11,5 @@ nebula-voxel = { path = "../nebula-voxel" }
 nebula-cubesphere = { path = "../nebula-cubesphere" }
 hashbrown = "0.15"
 thiserror = { workspace = true }
+rand = "0.9"
+rand_chacha = "0.9"

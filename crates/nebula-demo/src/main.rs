@@ -1607,6 +1607,154 @@ fn demonstrate_ore_distribution() {
     info!("Ore resource distribution demonstration completed successfully");
 }
 
+/// Demonstrates feature placement: Poisson disk sampling and biome-aware feature distribution.
+fn demonstrate_feature_placement() -> usize {
+    use hashbrown::HashMap;
+    use nebula_terrain::{
+        BiomeFeatureConfig, BiomeId, FeaturePlacer, FeatureTypeDef, FeatureTypeId, poisson_disk_2d,
+    };
+
+    info!("Starting feature placement demonstration");
+
+    // Verify Poisson disk sampling produces well-spaced points.
+    let points = poisson_disk_2d(42, (0.0, 0.0), (100.0, 100.0), 5.0, 30);
+    info!(
+        "Poisson disk sampling: {} points in 100x100 area with min spacing 5.0",
+        points.len()
+    );
+    assert!(
+        points.len() > 50,
+        "Expected many Poisson points, got {}",
+        points.len()
+    );
+
+    // Define feature types.
+    let tree = FeatureTypeDef {
+        name: "oak_tree".into(),
+        id: FeatureTypeId(1),
+        min_spacing: 8.0,
+        max_slope: 0.5,
+        min_height_above_sea: 2.0,
+        scale_range: (0.7, 1.3),
+    };
+    let boulder = FeatureTypeDef {
+        name: "boulder".into(),
+        id: FeatureTypeId(2),
+        min_spacing: 6.0,
+        max_slope: 1.0,
+        min_height_above_sea: 1.0,
+        scale_range: (0.5, 2.0),
+    };
+    let cactus = FeatureTypeDef {
+        name: "cactus".into(),
+        id: FeatureTypeId(3),
+        min_spacing: 10.0,
+        max_slope: 0.3,
+        min_height_above_sea: 3.0,
+        scale_range: (0.8, 1.5),
+    };
+
+    // Configure biomes with features.
+    let forest_biome = BiomeId(0);
+    let desert_biome = BiomeId(1);
+    let ocean_biome = BiomeId(2);
+
+    let mut biome_features = HashMap::new();
+    biome_features.insert(
+        forest_biome,
+        BiomeFeatureConfig {
+            features: vec![(FeatureTypeId(1), 0.8), (FeatureTypeId(2), 0.3)],
+        },
+    );
+    biome_features.insert(
+        desert_biome,
+        BiomeFeatureConfig {
+            features: vec![(FeatureTypeId(3), 0.5), (FeatureTypeId(2), 0.2)],
+        },
+    );
+    // Ocean biome has no features.
+
+    let placer = FeaturePlacer::new(12345, vec![tree, boulder, cactus], biome_features);
+
+    // Place features on land (forest biome).
+    let land_features = placer.place_features(
+        (0.0, 0.0),
+        (100.0, 100.0),
+        999,
+        &|_x, _y| 50.0, // All land at height 50
+        &|_x, _y| forest_biome,
+        0.0,
+    );
+    info!(
+        "Forest biome: {} features placed in 100x100 chunk",
+        land_features.len()
+    );
+    assert!(
+        !land_features.is_empty(),
+        "Expected features in forest biome on land"
+    );
+
+    // Place features in desert biome.
+    let desert_features = placer.place_features(
+        (0.0, 0.0),
+        (100.0, 100.0),
+        888,
+        &|_x, _y| 50.0,
+        &|_x, _y| desert_biome,
+        0.0,
+    );
+    info!(
+        "Desert biome: {} features placed in 100x100 chunk",
+        desert_features.len()
+    );
+
+    // No features in ocean (underwater).
+    let ocean_features = placer.place_features(
+        (0.0, 0.0),
+        (100.0, 100.0),
+        777,
+        &|_x, _y| -10.0, // Underwater
+        &|_x, _y| ocean_biome,
+        0.0,
+    );
+    assert!(
+        ocean_features.is_empty(),
+        "Expected no features in ocean biome"
+    );
+    info!("Ocean biome: 0 features (all underwater) -- correct");
+
+    // Verify determinism.
+    let features_a = placer.place_features(
+        (0.0, 0.0),
+        (50.0, 50.0),
+        555,
+        &|_x, _y| 100.0,
+        &|_x, _y| forest_biome,
+        0.0,
+    );
+    let features_b = placer.place_features(
+        (0.0, 0.0),
+        (50.0, 50.0),
+        555,
+        &|_x, _y| 100.0,
+        &|_x, _y| forest_biome,
+        0.0,
+    );
+    assert_eq!(
+        features_a.len(),
+        features_b.len(),
+        "Deterministic placement: same seed should produce same count"
+    );
+    info!(
+        "Deterministic placement verified: {} features both runs",
+        features_a.len()
+    );
+
+    let total = land_features.len() + desert_features.len();
+    info!("Feature placement demonstration completed: {total} total features placed");
+    total
+}
+
 /// Configure system ordering constraints for all engine stages.
 fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
@@ -1739,6 +1887,9 @@ fn main() {
 
     // Demonstrate ore resource distribution
     demonstrate_ore_distribution();
+
+    // Demonstrate feature placement
+    let feature_count = demonstrate_feature_placement();
 
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
@@ -1931,7 +2082,7 @@ fn main() {
         async_quads,
     );
     config.window.title = format!(
-        "{} - Invalidation: int={}/bnd={}/crn={} - CubeDisp: {}v [{:.0},{:.0}] - Biomes: {} - Entities: {}",
+        "{} - Invalidation: int={}/bnd={}/crn={} - CubeDisp: {}v [{:.0},{:.0}] - Biomes: {} - Features: {} - Entities: {}",
         config.window.title,
         inv_interior,
         inv_boundary,
@@ -1940,6 +2091,7 @@ fn main() {
         disp_min,
         disp_max,
         biome_count,
+        feature_count,
         entity_count,
     );
 
