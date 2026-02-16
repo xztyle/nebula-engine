@@ -5,6 +5,7 @@ pub mod compression;
 pub mod diagnostics;
 pub mod framing;
 pub mod messages;
+pub mod platform;
 pub mod reconnection;
 pub mod routing;
 pub mod session;
@@ -25,6 +26,9 @@ pub use messages::{
     ChunkData, EntityUpdate, LoginRequest, LoginResponse, Logout, Message, MessageError,
     PROTOCOL_VERSION, Ping, PlayerAction, PlayerPosition, Pong, TimeSync, deserialize_message,
     serialize_message,
+};
+pub use platform::{
+    SocketConfig, configure_stream, create_listener, default_bind_address, ipv4_bind_address,
 };
 pub use reconnection::{
     ExtendedSessionState, GraceConfig, ReconnectConfig, ReconnectError, ReconnectState,

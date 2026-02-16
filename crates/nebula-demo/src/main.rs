@@ -3225,6 +3225,31 @@ fn demonstrate_bandwidth_monitoring() {
     info!("Bandwidth monitoring demonstration completed successfully");
 }
 
+/// Demonstrates cross-platform TCP socket configuration.
+fn demonstrate_platform_tcp() {
+    info!("Starting cross-platform TCP socket configuration demonstration");
+
+    let config = nebula_net::SocketConfig::default();
+    info!(
+        "Platform socket config: nodelay={}, keepalive={}, idle={}s, interval={}s, retries={}, reuse_addr={}",
+        config.tcp_nodelay,
+        config.keepalive_enabled,
+        config.keepalive_idle.as_secs(),
+        config.keepalive_interval.as_secs(),
+        config.keepalive_retries,
+        config.reuse_addr,
+    );
+
+    let default_addr = nebula_net::default_bind_address(7777);
+    let ipv4_addr = nebula_net::ipv4_bind_address(7777);
+    info!(
+        "Default bind: {} (IPv6 dual-stack), fallback: {} (IPv4)",
+        default_addr, ipv4_addr,
+    );
+
+    info!("Cross-platform TCP socket configuration demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -3757,6 +3782,9 @@ fn main() {
 
     // Demonstrate network diagnostics
     demonstrate_network_diagnostics();
+
+    // Demonstrate cross-platform TCP socket configuration
+    demonstrate_platform_tcp();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {
