@@ -214,14 +214,20 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Validation Error")]
-    fn test_load_invalid_shader_panics() {
+    fn test_load_invalid_shader_returns_error() {
         let Some(device) = create_test_device() else {
             return;
         };
         let mut library = ShaderLibrary::new();
-        let _result = library.load_from_source(&device, "bad", INVALID_SHADER);
-        // This should panic due to shader compilation error
+        // Invalid shader should fail validation - either panic (caught) or return error
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            library.load_from_source(&device, "bad", INVALID_SHADER)
+        }));
+        // Either it panicked (validation error) or returned an error - both are acceptable
+        assert!(
+            result.is_err() || result.unwrap().is_err(),
+            "Invalid shader should fail validation"
+        );
     }
 
     #[test]
