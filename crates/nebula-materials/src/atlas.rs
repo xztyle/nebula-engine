@@ -269,6 +269,16 @@ impl AtlasBuilder {
         self.next_slot
     }
 
+    /// Returns a reference to the tile name → index map.
+    pub fn tile_map(&self) -> &HashMap<String, u32> {
+        &self.tile_map
+    }
+
+    /// Returns a reference to the atlas configuration.
+    pub fn config(&self) -> &AtlasConfig {
+        &self.config
+    }
+
     /// Finalizes the atlas: generates the mipmap chain and returns a [`TextureAtlas`].
     pub fn build(self) -> TextureAtlas {
         let mip_count = (self.config.atlas_size as f32).log2() as usize + 1;
