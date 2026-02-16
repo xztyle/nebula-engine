@@ -8,6 +8,8 @@ license.workspace = true
 clap = { version = "4", features = ["derive"] }
 dirs = { workspace = true }
 tracing = "0.1"
+rand = "0.8"
+rand_xoshiro = "0.6"
 nebula-app = { path = "../nebula-app" }
 nebula-config = { path = "../nebula-config" }
 nebula-coords = { path = "../nebula-coords" }

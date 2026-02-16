@@ -36,6 +36,12 @@ use glam::{UVec3, Vec3};
 // Re-export commonly used types from nebula-math
 pub use nebula_math::{Vec3I128, WorldPosition};
 
+// Modules
+mod spatial_hash;
+
+// Re-exports from modules
+pub use spatial_hash::{EntityId, SpatialEntity, SpatialEntityMut, SpatialHashMap};
+
 // Additional vector types not in nebula-math
 /// 64-bit signed integer 3D vector for planet-space coordinates
 #[repr(C)]
@@ -136,6 +142,14 @@ pub struct SectorKey(pub SectorIndex);
 
 impl From<&SectorCoord> for SectorKey {
     fn from(coord: &SectorCoord) -> Self {
+        SectorKey(coord.sector)
+    }
+}
+
+impl SectorKey {
+    /// Create a SectorKey directly from a world position.
+    pub fn from_world(pos: &WorldPosition) -> Self {
+        let coord = SectorCoord::from_world(pos);
         SectorKey(coord.sector)
     }
 }
