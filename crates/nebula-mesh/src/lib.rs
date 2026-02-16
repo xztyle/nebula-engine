@@ -10,6 +10,7 @@ pub mod invalidation;
 pub mod lod_stitching;
 pub mod neighborhood;
 pub mod packed;
+pub mod transition_seams;
 pub mod vertex_format;
 pub mod visibility;
 pub mod visible_faces;
@@ -31,4 +32,7 @@ pub use displacement::{DisplacementBuffer, PlanetParams, displace_to_cubesphere,
 pub use invalidation::{ChunkMeshState, MeshInvalidator};
 pub use lod_stitching::{
     LodContext, apply_lod_stitching, generate_transition_strip, snap_edge_vertices,
+};
+pub use transition_seams::{
+    ChunkLodContext, NeighborLodRelation, apply_seam_fix, constrain_edge_vertices, generate_skirt,
 };

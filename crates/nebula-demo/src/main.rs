@@ -2156,6 +2156,97 @@ fn demonstrate_quadtree_lod_per_face() {
     info!("Quadtree LOD per-face demonstration completed successfully");
 }
 
+/// Demonstrates LOD transition seam elimination: edge constraining + skirt geometry.
+fn demonstrate_lod_transition_seams() {
+    use nebula_mesh::{
+        ChunkLodContext, ChunkVertex, FaceDirection, NeighborLodRelation, PackedChunkMesh,
+        apply_seam_fix, constrain_edge_vertices, generate_skirt,
+    };
+
+    info!("Starting LOD transition seam demonstration");
+
+    let chunk_size = 32usize;
+
+    // 1. Build a test mesh with boundary vertices on +X face.
+    let mut mesh = PackedChunkMesh::new();
+    for y in 0..=chunk_size as u8 {
+        for z in 0..=chunk_size as u8 {
+            mesh.vertices.push(ChunkVertex::new(
+                [chunk_size as u8, y, z],
+                FaceDirection::PosX,
+                0,
+                1,
+                [y, z],
+            ));
+        }
+    }
+    let verts_before = mesh.vertices.len();
+    info!("  Built boundary mesh with {} vertices", verts_before);
+
+    // 2. Constrain edge vertices for LOD 0 next to LOD 1 neighbor.
+    constrain_edge_vertices(&mut mesh, FaceDirection::PosX, 1, chunk_size);
+
+    let step = 2usize;
+    let mut all_aligned = true;
+    for v in &mesh.vertices {
+        if !(v.position[1] as usize).is_multiple_of(step)
+            || !(v.position[2] as usize).is_multiple_of(step)
+        {
+            all_aligned = false;
+            break;
+        }
+    }
+    info!(
+        "  Edge constraining (lod_diff=1): all vertices aligned = {}",
+        all_aligned
+    );
+    assert!(all_aligned, "All boundary vertices must be aligned to step");
+
+    // 3. Generate skirt geometry on -Z face.
+    let mut skirt_mesh = PackedChunkMesh::new();
+    let skirt_tris = generate_skirt(&mut skirt_mesh, FaceDirection::NegZ, 2, chunk_size);
+    info!(
+        "  Skirt geometry: {} triangles, {} vertices",
+        skirt_tris,
+        skirt_mesh.vertices.len()
+    );
+    assert!(skirt_tris > 0, "Skirt should produce triangles");
+
+    // 4. Full seam fix pipeline.
+    let mut full_mesh = PackedChunkMesh::new();
+    for y in 0..=chunk_size as u8 {
+        full_mesh.vertices.push(ChunkVertex::new(
+            [chunk_size as u8, y, 16],
+            FaceDirection::PosX,
+            0,
+            1,
+            [y, 16],
+        ));
+    }
+    let ctx = ChunkLodContext::from_neighbor_lods(0, [Some(1), None, None, Some(2), None, None]);
+    let total_skirt = apply_seam_fix(&mut full_mesh, &ctx, chunk_size, 2);
+    info!(
+        "  Full seam fix: {} skirt triangles across {} transitioning faces",
+        total_skirt,
+        FaceDirection::ALL
+            .iter()
+            .filter(|d| ctx.has_lod_difference(**d))
+            .count()
+    );
+
+    // 5. Verify ChunkLodContext classification.
+    assert_eq!(
+        ctx.neighbors[0],
+        NeighborLodRelation::HigherThanNeighbor { lod_diff: 1 }
+    );
+    assert_eq!(
+        ctx.neighbors[3],
+        NeighborLodRelation::HigherThanNeighbor { lod_diff: 2 }
+    );
+
+    info!("LOD transition seam demonstration completed successfully");
+}
+
 /// Configure system ordering constraints for all engine stages.
 fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
@@ -2306,6 +2397,9 @@ fn main() {
 
     // Demonstrate per-face quadtree LOD
     demonstrate_quadtree_lod_per_face();
+
+    // Demonstrate LOD transition seam elimination
+    demonstrate_lod_transition_seams();
 
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
