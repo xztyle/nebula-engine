@@ -3448,6 +3448,88 @@ fn demonstrate_entity_replication() {
     info!("Entity replication demonstration completed successfully");
 }
 
+/// Demonstrates spatial interest management: entities entering and leaving
+/// a client's interest area produce transitions.
+fn demonstrate_spatial_interest() {
+    use nebula_multiplayer::{
+        InterestArea, InterestPosition, NetworkId, SpatialInterestSystem, TrackedEntity,
+    };
+
+    info!("Starting spatial interest management demonstration");
+
+    let mut sys = SpatialInterestSystem::new();
+    sys.add_client(
+        1,
+        InterestArea { radius: 500.0 },
+        InterestPosition::new(0.0, 0.0, 0.0),
+    );
+
+    // Tick 1: two entities, one inside (100m), one outside (800m).
+    let entities = vec![
+        TrackedEntity {
+            network_id: NetworkId(100),
+            position: InterestPosition::new(100.0, 0.0, 0.0),
+        },
+        TrackedEntity {
+            network_id: NetworkId(200),
+            position: InterestPosition::new(800.0, 0.0, 0.0),
+        },
+    ];
+    let results = sys.evaluate(&entities);
+    for (client_id, transitions) in &results {
+        info!(
+            "Client {}: entered={}, exited={}",
+            client_id,
+            transitions.entered.len(),
+            transitions.exited.len()
+        );
+    }
+
+    // Tick 2: outside entity moves inside (300m).
+    let entities_moved = vec![
+        TrackedEntity {
+            network_id: NetworkId(100),
+            position: InterestPosition::new(100.0, 0.0, 0.0),
+        },
+        TrackedEntity {
+            network_id: NetworkId(200),
+            position: InterestPosition::new(300.0, 0.0, 0.0),
+        },
+    ];
+    let results2 = sys.evaluate(&entities_moved);
+    for (client_id, transitions) in &results2 {
+        info!(
+            "Client {} tick 2: entered={}, exited={}",
+            client_id,
+            transitions.entered.len(),
+            transitions.exited.len()
+        );
+    }
+
+    // Tick 3: first entity leaves (700m).
+    let entities_leave = vec![
+        TrackedEntity {
+            network_id: NetworkId(100),
+            position: InterestPosition::new(700.0, 0.0, 0.0),
+        },
+        TrackedEntity {
+            network_id: NetworkId(200),
+            position: InterestPosition::new(300.0, 0.0, 0.0),
+        },
+    ];
+    let results3 = sys.evaluate(&entities_leave);
+    for (client_id, transitions) in &results3 {
+        info!(
+            "Client {} tick 3: entered={}, exited={}",
+            client_id,
+            transitions.entered.len(),
+            transitions.exited.len()
+        );
+    }
+
+    info!("Spatial interest management demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -3989,6 +4071,9 @@ fn main() {
 
     // Demonstrate entity replication
     demonstrate_entity_replication();
+
+    // Demonstrate spatial interest management
+    demonstrate_spatial_interest();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {
