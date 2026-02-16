@@ -2881,6 +2881,12 @@ fn main() {
     };
     let mut cam_rotation = nebula_ecs::Rotation::default();
 
+    // Third-person camera: follows a placeholder "player" entity.
+    let mut tps_camera = nebula_player::ThirdPersonCamera::default();
+    let player_target_pos = nebula_ecs::WorldPos::new(1_000_000, 2_000_000, 500_000);
+    let mut tps_cam_pos = nebula_ecs::WorldPos::new(1_000_000, 2_005_000, 505_000);
+    let mut tps_cam_rotation = nebula_ecs::Rotation::default();
+
     // Gamepad manager for controller input.
     let mut gamepad_mgr = nebula_input::GamepadManager::new();
 
@@ -2963,6 +2969,16 @@ fn main() {
             nebula_player::first_person_move_system(kb, &fps_camera, &cam_rotation, &mut world_pos);
             demo_state.position = world_pos.0;
         }
+
+        // Third-person camera: orbit, zoom, follow.
+        nebula_player::third_person_orbit_system(ms, &mut tps_camera);
+        nebula_player::third_person_zoom_system(ms, &mut tps_camera);
+        nebula_player::third_person_follow_system(
+            &tps_camera,
+            &player_target_pos,
+            &mut tps_cam_pos,
+            &mut tps_cam_rotation,
+        );
 
         // Sprint modifier.
         if action_state.is_action_active(nebula_input::Action::Sprint) {
