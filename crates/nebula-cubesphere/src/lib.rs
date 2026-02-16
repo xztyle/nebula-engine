@@ -12,6 +12,7 @@ mod planet_def;
 mod planet_registry;
 mod projection;
 mod quadtree;
+mod winding;
 mod world_conv;
 
 pub use bounds::{BoundingSphere, ChunkAABB, WorldAABB, WorldBoundingSphere};
@@ -32,6 +33,10 @@ pub use projection::{
     face_coord_to_sphere_everitt, project,
 };
 pub use quadtree::{FaceQuadtree, QuadNode};
+pub use winding::{
+    compute_winding_flip_table, emit_triangle, face_needs_winding_flip, generate_chunk_indices,
+    generate_lod_transition_strip, triangle_winds_outward, validate_edge_winding,
+};
 pub use world_conv::{
     face_grid_to_world_positions, face_uv_to_world_position, world_position_to_face_uv,
 };
