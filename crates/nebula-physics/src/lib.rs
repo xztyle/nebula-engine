@@ -6,6 +6,9 @@
 pub mod gravity;
 pub mod physics_bridge;
 pub mod physics_island;
+pub mod physics_region;
+#[cfg(test)]
+mod physics_region_tests;
 pub mod player_physics;
 pub mod voxel_collision;
 pub mod voxel_raycast;
@@ -22,6 +25,11 @@ pub use physics_bridge::{
 pub use physics_island::{
     ChunkCoord, FrozenPhysicsState, IslandPlayer, IslandWorldPos, PhysicsEligible, PhysicsIsland,
     RigidBodyHandle, physics_island_update_system,
+};
+pub use physics_region::{
+    CurrentPhysicsRegion, GravityConfig, PhysicsRegion, PhysicsRegionType, RegionBounds,
+    TRANSITION_SPEED, apply_region_gravity, create_default_space_region,
+    create_planet_surface_region, region_detection_system,
 };
 pub use player_physics::{
     JUMP_IMPULSE, PlayerPhysics, WALK_SPEED, ground_raycast, player_movement_step,
