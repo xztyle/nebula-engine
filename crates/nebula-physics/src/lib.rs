@@ -3,6 +3,7 @@
 //! Wraps the Rapier 3D physics engine behind a single [`PhysicsWorld`] resource
 //! that owns all simulation state and exposes a minimal, engine-friendly API.
 
+pub mod collider_lifecycle;
 pub mod gravity;
 pub mod physics_bridge;
 pub mod physics_debug;
@@ -15,6 +16,13 @@ pub mod voxel_collision;
 pub mod voxel_raycast;
 pub mod zero_gravity;
 
+#[cfg(debug_assertions)]
+pub use collider_lifecycle::orphan_detection_system;
+pub use collider_lifecycle::{
+    ChunkCollider, ColliderHandle, DespawnedHandleCache, PhysicsBody, PhysicsBodyType,
+    PhysicsShape, deduplicate_voxel_changes, despawn_physics_bodies, on_chunk_loaded,
+    on_chunk_unloaded, on_voxel_changed, spawn_physics_bodies,
+};
 pub use gravity::{
     GravityResult, GravitySource, LocalGravity, apply_gravity_forces_system, compute_gravity,
     gravity_update_system,
