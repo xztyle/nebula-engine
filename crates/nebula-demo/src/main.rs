@@ -11,7 +11,10 @@ use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
 use nebula_cubesphere::PlanetDef;
 use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
-use nebula_voxel::{Chunk, ChunkData, Transparency, VoxelTypeDef, VoxelTypeId, VoxelTypeRegistry};
+use nebula_voxel::{
+    Chunk, ChunkAddress, ChunkData, ChunkManager, Transparency, VoxelTypeDef, VoxelTypeId,
+    VoxelTypeRegistry,
+};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use tracing::info;
@@ -439,8 +442,53 @@ fn demonstrate_chunk_api() {
     info!("Chunk get/set API demonstration completed successfully");
 }
 
-/// Demonstrates cube-to-sphere projection by projecting points on each face
-/// and verifying the sphere is well-formed.
+/// Demonstrates the chunk manager by loading a 5x5 grid of chunks.
+fn demonstrate_chunk_manager() -> usize {
+    info!("Starting chunk manager demonstration");
+
+    let mut manager = ChunkManager::new();
+    let stone = VoxelTypeId(1);
+
+    // Load a 5x5 grid of chunks on face 0.
+    for cx in 0..5_i64 {
+        for cz in 0..5_i64 {
+            let mut chunk = Chunk::new();
+            // Fill bottom layer with stone so chunks aren't empty.
+            for x in 0u8..32 {
+                for z in 0u8..32 {
+                    chunk.set(x, 0, z, stone);
+                }
+            }
+            manager.load_chunk(ChunkAddress::new(cx, 0, cz, 0), chunk);
+        }
+    }
+
+    let count = manager.loaded_count();
+    info!("Chunk manager: {} chunks loaded (5x5 grid)", count);
+
+    // Verify a specific chunk is accessible.
+    let center = ChunkAddress::new(2, 0, 2, 0);
+    if let Some(c) = manager.get_chunk(&center) {
+        info!(
+            "  Center chunk (2,0,2): palette={}, version={}",
+            c.palette_len(),
+            c.version(),
+        );
+    }
+
+    // Unload edge chunks to simulate camera movement.
+    for cz in 0..5_i64 {
+        manager.unload_chunk(ChunkAddress::new(0, 0, cz, 0));
+    }
+    info!(
+        "After unloading edge: {} chunks remain",
+        manager.loaded_count()
+    );
+
+    info!("Chunk manager demonstration completed successfully");
+    count
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -498,6 +546,9 @@ fn main() {
     // Demonstrate chunk get/set API
     demonstrate_chunk_api();
 
+    // Demonstrate chunk manager
+    let chunks_loaded = demonstrate_chunk_manager();
+
     // Log initial state
     let mut demo_state = DemoState::new();
     let initial_sector = SectorCoord::from_world(&demo_state.position);
@@ -505,8 +556,8 @@ fn main() {
     // Update window title to show planet info and nearby count
     let terra = PlanetDef::earth_like("Terra", WorldPosition::default(), 42);
     config.window.title = format!(
-        "Nebula Engine - Planet: {}, radius={} mm - Registry: {} types - Nearby: {} entities",
-        terra.name, terra.radius, voxel_type_count, demo_state.nearby_count
+        "Nebula Engine - Planet: {}, radius={} mm - Registry: {} types - Chunks loaded: {} - Nearby: {} entities",
+        terra.name, terra.radius, voxel_type_count, chunks_loaded, demo_state.nearby_count
     );
 
     info!(

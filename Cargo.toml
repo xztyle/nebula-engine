@@ -52,3 +52,4 @@ wgpu = "28.0"
 winit = "0.30"
 bytemuck = { version = "1.21", features = ["derive"] }
 glam = "0.29"
+rustc-hash = "2.1"
