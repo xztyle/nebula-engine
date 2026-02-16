@@ -7,9 +7,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::game_loop::GameLoop;
+use bytemuck;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
-use nebula_render::{RenderContext, init_render_context_blocking};
+use nebula_render::{
+    BufferAllocator, CameraUniform, IndexData, MeshBuffer, RenderContext, ShaderLibrary,
+    UNLIT_SHADER_SOURCE, UnlitPipeline, VertexPositionColor, draw_unlit,
+    init_render_context_blocking,
+};
 use tracing::{error, info, instrument, warn};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -75,6 +80,14 @@ pub struct AppState {
     pub start_time: Instant,
     /// Previous frame time for FPS calculation.
     pub last_frame_time: Instant,
+    /// Unlit rendering pipeline.
+    pub unlit_pipeline: Option<UnlitPipeline>,
+    /// Triangle mesh for rendering.
+    pub triangle_mesh: Option<MeshBuffer>,
+    /// Camera uniform buffer.
+    pub camera_buffer: Option<wgpu::Buffer>,
+    /// Camera bind group.
+    pub camera_bind_group: Option<wgpu::BindGroup>,
 }
 
 impl AppState {
@@ -98,6 +111,10 @@ impl AppState {
             debug_state,
             start_time: now,
             last_frame_time: now,
+            unlit_pipeline: None,
+            triangle_mesh: None,
+            camera_buffer: None,
+            camera_bind_group: None,
         }
     }
 
@@ -128,6 +145,10 @@ impl AppState {
             debug_state,
             start_time: now,
             last_frame_time: now,
+            unlit_pipeline: None,
+            triangle_mesh: None,
+            camera_buffer: None,
+            camera_bind_group: None,
         }
     }
 
@@ -142,6 +163,84 @@ impl AppState {
             self.surface_width as f64 / scale,
             self.surface_height as f64 / scale,
         )
+    }
+
+    /// Initialize the rendering pipeline and resources.
+    fn initialize_rendering(&mut self, gpu: &RenderContext) {
+        use wgpu::util::DeviceExt;
+
+        // Load the unlit shader
+        let mut shader_library = ShaderLibrary::new();
+        let shader = shader_library
+            .load_from_source(&gpu.device, "unlit", UNLIT_SHADER_SOURCE)
+            .expect("Failed to load unlit shader");
+
+        // Create the unlit pipeline
+        let unlit_pipeline = UnlitPipeline::new(
+            &gpu.device,
+            &shader,
+            gpu.surface_format,
+            None, // no depth buffer for now
+        );
+
+        // Create triangle mesh
+        let vertices = [
+            VertexPositionColor {
+                position: [0.0, 0.5, 0.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+            }, // red top
+            VertexPositionColor {
+                position: [-0.5, -0.5, 0.0],
+                color: [0.0, 1.0, 0.0, 1.0],
+            }, // green left
+            VertexPositionColor {
+                position: [0.5, -0.5, 0.0],
+                color: [0.0, 0.0, 1.0, 1.0],
+            }, // blue right
+        ];
+        let indices: [u16; 3] = [0, 1, 2];
+
+        let allocator = BufferAllocator::new(&gpu.device);
+        let triangle_mesh = allocator.create_mesh(
+            "demo-triangle",
+            bytemuck::cast_slice(&vertices),
+            IndexData::U16(&indices),
+        );
+
+        // Create camera uniform buffer with identity matrix
+        let camera_uniform = CameraUniform {
+            view_proj: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        };
+
+        let camera_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("camera-uniform"),
+                contents: bytemuck::cast_slice(&[camera_uniform]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
+        // Create camera bind group
+        let camera_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("camera-bind-group"),
+            layout: &unlit_pipeline.camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+        });
+
+        self.unlit_pipeline = Some(unlit_pipeline);
+        self.triangle_mesh = Some(triangle_mesh);
+        self.camera_buffer = Some(camera_buffer);
+        self.camera_bind_group = Some(camera_bind_group);
+
+        info!("Rendering pipeline initialized successfully");
     }
 
     /// Updates the debug state with current frame metrics.
@@ -194,6 +293,8 @@ impl ApplicationHandler for AppState {
 
             match init_render_context_blocking(window.clone()) {
                 Ok(ctx) => {
+                    // Initialize rendering pipeline and resources
+                    self.initialize_rendering(&ctx);
                     self.gpu = Some(ctx);
                 }
                 Err(e) => {
@@ -278,25 +379,41 @@ impl ApplicationHandler for AppState {
                                 .create_view(&wgpu::TextureViewDescriptor::default());
                             let mut encoder = gpu.device.create_command_encoder(
                                 &wgpu::CommandEncoderDescriptor {
-                                    label: Some("Clear Encoder"),
+                                    label: Some("Render Encoder"),
                                 },
                             );
-                            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                label: Some("Clear Pass"),
-                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                    view: &view,
-                                    resolve_target: None,
-                                    ops: wgpu::Operations {
-                                        load: wgpu::LoadOp::Clear(clear_color),
-                                        store: wgpu::StoreOp::Store,
-                                    },
-                                    depth_slice: None,
-                                })],
-                                depth_stencil_attachment: None,
-                                timestamp_writes: None,
-                                occlusion_query_set: None,
-                                multiview_mask: None,
-                            });
+
+                            {
+                                let mut render_pass =
+                                    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                        label: Some("Render Pass"),
+                                        color_attachments: &[Some(
+                                            wgpu::RenderPassColorAttachment {
+                                                view: &view,
+                                                resolve_target: None,
+                                                ops: wgpu::Operations {
+                                                    load: wgpu::LoadOp::Clear(clear_color),
+                                                    store: wgpu::StoreOp::Store,
+                                                },
+                                                depth_slice: None,
+                                            },
+                                        )],
+                                        depth_stencil_attachment: None,
+                                        timestamp_writes: None,
+                                        occlusion_query_set: None,
+                                        multiview_mask: None,
+                                    });
+
+                                // Render the triangle if we have all the required resources
+                                if let (Some(pipeline), Some(mesh), Some(bind_group)) = (
+                                    &self.unlit_pipeline,
+                                    &self.triangle_mesh,
+                                    &self.camera_bind_group,
+                                ) {
+                                    draw_unlit(&mut render_pass, pipeline, bind_group, mesh);
+                                }
+                            }
+
                             gpu.queue.submit(std::iter::once(encoder.finish()));
                             output.present();
                         }

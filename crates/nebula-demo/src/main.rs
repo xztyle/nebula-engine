@@ -7,7 +7,7 @@
 use clap::Parser;
 use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
-use nebula_render::{BufferAllocator, IndexData, ShaderLibrary, VertexPositionColor, load_shader};
+use nebula_render::{ShaderLibrary, load_shader};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use tracing::info;
@@ -127,11 +127,11 @@ impl DemoState {
     }
 }
 
-/// Demonstrates the buffer management system by creating triangle vertex data and uploading it to GPU buffers.
-fn demonstrate_buffer_management() {
-    info!("Starting buffer management demonstration");
+/// Demonstrates the shader loading system.
+fn demonstrate_shader_loading() {
+    info!("Starting shader loading demonstration");
 
-    // Create a headless GPU context for testing buffer allocation
+    // Create a headless GPU context for testing shader compilation
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
         ..Default::default()
@@ -162,99 +162,7 @@ fn demonstrate_buffer_management() {
             .expect("Failed to create device")
     });
 
-    info!("GPU device initialized for buffer management demo");
-
-    // Create a buffer allocator
-    let allocator = BufferAllocator::new(&device);
-    info!("BufferAllocator created");
-
-    // Create triangle vertex data
-    let vertices: &[VertexPositionColor] = &[
-        VertexPositionColor {
-            position: [0.0, 0.5, 0.0],
-            color: [1.0, 0.0, 0.0, 1.0],
-        }, // Red top
-        VertexPositionColor {
-            position: [-0.5, -0.5, 0.0],
-            color: [0.0, 1.0, 0.0, 1.0],
-        }, // Green left
-        VertexPositionColor {
-            position: [0.5, -0.5, 0.0],
-            color: [0.0, 0.0, 1.0, 1.0],
-        }, // Blue right
-    ];
-
-    let indices: &[u16] = &[0, 1, 2];
-
-    info!(
-        "Creating triangle mesh with {} vertices and {} indices",
-        vertices.len(),
-        indices.len()
-    );
-
-    // Create mesh buffer using the buffer allocator
-    let mesh_buffer = allocator.create_mesh(
-        "demo-triangle",
-        bytemuck::cast_slice(vertices),
-        IndexData::U16(indices),
-    );
-
-    info!(
-        "Triangle mesh buffer created successfully: {} indices, format: {:?}",
-        mesh_buffer.index_count, mesh_buffer.index_format
-    );
-
-    // Create a simple quad to test u32 indices
-    let quad_vertices: &[VertexPositionColor] = &[
-        VertexPositionColor {
-            position: [-1.0, 1.0, 0.0],
-            color: [1.0, 1.0, 1.0, 1.0],
-        }, // Top-left
-        VertexPositionColor {
-            position: [1.0, 1.0, 0.0],
-            color: [1.0, 1.0, 0.0, 1.0],
-        }, // Top-right
-        VertexPositionColor {
-            position: [1.0, -1.0, 0.0],
-            color: [1.0, 0.0, 1.0, 1.0],
-        }, // Bottom-right
-        VertexPositionColor {
-            position: [-1.0, -1.0, 0.0],
-            color: [0.0, 1.0, 1.0, 1.0],
-        }, // Bottom-left
-    ];
-
-    let quad_indices: &[u32] = &[0, 1, 2, 2, 3, 0]; // Two triangles
-
-    info!(
-        "Creating quad mesh with {} vertices and {} indices (u32)",
-        quad_vertices.len(),
-        quad_indices.len()
-    );
-
-    let quad_mesh_buffer = allocator.create_mesh(
-        "demo-quad",
-        bytemuck::cast_slice(quad_vertices),
-        IndexData::U32(quad_indices),
-    );
-
-    info!(
-        "Quad mesh buffer created successfully: {} indices, format: {:?}",
-        quad_mesh_buffer.index_count, quad_mesh_buffer.index_format
-    );
-
-    // Test empty mesh handling
-    let empty_mesh = allocator.create_mesh("demo-empty", &[], IndexData::U16(&[]));
-
-    info!(
-        "Empty mesh buffer created successfully: {} indices",
-        empty_mesh.index_count
-    );
-
-    info!("Buffer management demonstration completed successfully");
-
-    // Demonstrate shader module loading
-    info!("Starting shader module loading demonstration");
+    info!("GPU device initialized for shader loading demo");
 
     let mut shader_library = ShaderLibrary::new().with_shader_dir("assets/shaders");
 
@@ -301,7 +209,7 @@ fn demonstrate_buffer_management() {
     }
 
     info!("Shader library contains {} shaders", shader_library.len());
-    info!("Shader module loading demonstration completed successfully");
+    info!("Shader loading demonstration completed successfully");
 }
 
 fn main() {
@@ -325,16 +233,16 @@ fn main() {
     let log_dir = config_dir.join("logs");
     nebula_log::init_logging(Some(&log_dir), cfg!(debug_assertions), Some(&config));
 
-    // Demonstrate buffer management functionality
-    demonstrate_buffer_management();
+    // Demonstrate shader loading functionality
+    demonstrate_shader_loading();
 
     // Log initial state
     let mut demo_state = DemoState::new();
     let initial_sector = SectorCoord::from_world(&demo_state.position);
 
-    // Update window title to show nearby count
+    // Update window title to show nearby count and triangle
     config.window.title = format!(
-        "Nebula Engine - Nearby: {} entities",
+        "Nebula Engine [Triangle Demo] - Nearby: {} entities",
         demo_state.nearby_count
     );
 
