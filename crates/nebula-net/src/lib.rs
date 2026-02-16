@@ -2,6 +2,7 @@
 
 pub mod bandwidth;
 pub mod compression;
+pub mod diagnostics;
 pub mod framing;
 pub mod messages;
 pub mod reconnection;
@@ -18,6 +19,7 @@ pub use compression::{
     COMPRESSION_FLAG_LZ4, COMPRESSION_FLAG_NONE, CompressionConfig, CompressionError,
     compress_payload, decompress_payload,
 };
+pub use diagnostics::{DiagnosticsConfig, DiagnosticsTracker, NetworkDiagnostics};
 pub use framing::{FrameConfig, FrameError, read_frame, write_frame};
 pub use messages::{
     ChunkData, EntityUpdate, LoginRequest, LoginResponse, Logout, Message, MessageError,

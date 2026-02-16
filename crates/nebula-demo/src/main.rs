@@ -3154,6 +3154,34 @@ fn demonstrate_reconnection_logic() {
     info!("Reconnection logic demonstration completed successfully");
 }
 
+fn demonstrate_network_diagnostics() {
+    info!("Starting network diagnostics demonstration");
+
+    let mut tracker = nebula_net::DiagnosticsTracker::new(nebula_net::DiagnosticsConfig {
+        window_size: 50,
+        ..Default::default()
+    });
+
+    // Simulate 10 ping/pong exchanges
+    for _ in 0..10 {
+        let seq = tracker.on_ping_sent();
+        tracker.on_pong_received(seq);
+    }
+
+    let snap = tracker.snapshot();
+    info!(
+        "Diagnostics: avg_rtt={:?}, min={:?}, max={:?}, jitter={:?}, loss={:.1}%, samples={}",
+        snap.average_rtt,
+        snap.min_rtt,
+        snap.max_rtt,
+        snap.jitter,
+        snap.loss_rate * 100.0,
+        snap.sample_count,
+    );
+
+    info!("Network diagnostics demonstration completed successfully");
+}
+
 fn demonstrate_bandwidth_monitoring() {
     info!("Starting bandwidth monitoring demonstration");
 
@@ -3726,6 +3754,9 @@ fn main() {
 
     // Demonstrate bandwidth monitoring
     demonstrate_bandwidth_monitoring();
+
+    // Demonstrate network diagnostics
+    demonstrate_network_diagnostics();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {
