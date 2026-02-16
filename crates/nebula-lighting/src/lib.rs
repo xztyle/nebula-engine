@@ -1,11 +1,15 @@
 //! Light types, shadow mapping, PBR shading calculations, and ambient occlusion integration.
 
+pub mod cross_chunk;
 mod directional;
 pub mod pbr;
 mod point;
 mod shadow;
 pub mod voxel_light;
 
+pub use cross_chunk::{
+    BorderLightFace, ChunkBorderLights, Face, border_changed, propagate_cross_chunk,
+};
 pub use directional::{DirectionalLight, DirectionalLightUniform, sun_direction_at_time};
 pub use pbr::{PbrMaterial, PbrMaterialUniform};
 pub use point::{
