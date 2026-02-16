@@ -122,15 +122,17 @@ mod tests {
 
     #[test]
     fn test_arc_strong_count_drops_after_clone() {
-        let a = CowChunk::new_air();
+        // Use a non-global chunk to avoid interference from parallel tests
+        // sharing the static AIR_CHUNK.
+        let a = CowChunk::new(ChunkData::new(VoxelTypeId(99)));
         let b = a.clone_shared();
         let mut c = a.clone_shared();
 
-        let count_before = a.ref_count();
+        assert_eq!(a.ref_count(), 3); // a + b + c
         // Mutate c — triggers CoW, c gets its own allocation.
         c.get_mut().set(1, 1, 1, VoxelTypeId(7));
 
-        assert_eq!(a.ref_count(), count_before - 1);
+        assert_eq!(a.ref_count(), 2); // a + b
         assert_eq!(c.ref_count(), 1, "mutated chunk should be exclusive");
         // b still shares with a.
         assert!(a.ptr_eq(&b));

@@ -14,6 +14,8 @@ pub struct MeshVertex {
     pub uv: [f32; 2],
     /// Voxel type for material/texture lookup.
     pub voxel_type: VoxelTypeId,
+    /// Ambient occlusion level (0 = fully lit, 3 = fully shadowed).
+    pub ao: u8,
 }
 
 /// Metadata for a single merged quad, used for analysis and debugging.
@@ -49,6 +51,7 @@ impl ChunkMesh {
     ///
     /// `layer`, `u`, `v` are in chunk-local voxel coordinates.
     /// `w` and `h` are the quad dimensions along the u and v axes.
+    /// `ao` contains the ambient occlusion values for the 4 vertices.
     #[allow(clippy::too_many_arguments)]
     pub fn push_quad(
         &mut self,
@@ -59,6 +62,22 @@ impl ChunkMesh {
         w: usize,
         h: usize,
         voxel_type: VoxelTypeId,
+    ) {
+        self.push_quad_ao(direction, layer, u, v, w, h, voxel_type, [0; 4]);
+    }
+
+    /// Pushes a single merged quad with per-vertex ambient occlusion.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_quad_ao(
+        &mut self,
+        direction: FaceDirection,
+        layer: usize,
+        u: usize,
+        v: usize,
+        w: usize,
+        h: usize,
+        voxel_type: VoxelTypeId,
+        ao: [u8; 4],
     ) {
         let (layer_axis, u_axis, v_axis) = direction.sweep_axes();
         let normal = direction.normal();
@@ -96,14 +115,19 @@ impl ChunkMesh {
                 normal,
                 uv: uvs[i],
                 voxel_type,
+                ao: ao[i],
             });
         }
+
+        // Determine whether to flip the diagonal based on AO anisotropy.
+        let flip = crate::ambient_occlusion::should_flip_ao_diagonal(ao);
 
         // Two triangles with correct winding for front-face rendering.
         // For positive-direction faces, CCW winding when viewed from outside.
         // For negative-direction faces, reverse winding.
-        match direction {
-            FaceDirection::PosX | FaceDirection::PosY | FaceDirection::PosZ => {
+        // When flipped, use diagonal 1-3 instead of 0-2.
+        match (direction, flip) {
+            (FaceDirection::PosX | FaceDirection::PosY | FaceDirection::PosZ, false) => {
                 self.indices.extend_from_slice(&[
                     base,
                     base + 1,
@@ -113,7 +137,17 @@ impl ChunkMesh {
                     base + 3,
                 ]);
             }
-            FaceDirection::NegX | FaceDirection::NegY | FaceDirection::NegZ => {
+            (FaceDirection::PosX | FaceDirection::PosY | FaceDirection::PosZ, true) => {
+                self.indices.extend_from_slice(&[
+                    base + 1,
+                    base + 2,
+                    base + 3,
+                    base,
+                    base + 1,
+                    base + 3,
+                ]);
+            }
+            (FaceDirection::NegX | FaceDirection::NegY | FaceDirection::NegZ, false) => {
                 self.indices.extend_from_slice(&[
                     base,
                     base + 2,
@@ -121,6 +155,16 @@ impl ChunkMesh {
                     base,
                     base + 3,
                     base + 2,
+                ]);
+            }
+            (FaceDirection::NegX | FaceDirection::NegY | FaceDirection::NegZ, true) => {
+                self.indices.extend_from_slice(&[
+                    base + 1,
+                    base + 3,
+                    base + 2,
+                    base,
+                    base + 3,
+                    base + 1,
                 ]);
             }
         }

@@ -3,6 +3,7 @@
 
 use nebula_voxel::{CHUNK_SIZE, ChunkData, VoxelTypeRegistry};
 
+use crate::ambient_occlusion::compute_face_ao;
 use crate::chunk_mesh::ChunkMesh;
 use crate::face_direction::FaceDirection;
 use crate::neighborhood::ChunkNeighborhood;

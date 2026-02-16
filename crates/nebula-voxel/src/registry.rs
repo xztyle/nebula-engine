@@ -139,6 +139,16 @@ impl VoxelTypeRegistry {
         id.0 == 0
     }
 
+    /// Returns `true` if the given voxel type is solid (entities collide with it).
+    ///
+    /// Air and unknown IDs are not solid.
+    pub fn is_solid(&self, id: VoxelTypeId) -> bool {
+        match self.types.get(id.0 as usize) {
+            Some(def) => def.solid,
+            None => false,
+        }
+    }
+
     /// Returns `true` if the given voxel type is transparent (fully or semi).
     ///
     /// Air is considered transparent. Returns `true` for unknown IDs as a
