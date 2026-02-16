@@ -6,3 +6,5 @@ license.workspace = true
 
 [dependencies]
 bevy_ecs = { workspace = true }
+nebula-math = { path = "../nebula-math" }
+glam = { workspace = true }
