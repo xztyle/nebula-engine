@@ -14,3 +14,8 @@ nebula-app = { path = "../nebula-app" }
 nebula-config = { path = "../nebula-config" }
 nebula-coords = { path = "../nebula-coords" }
 nebula-log = { path = "../nebula-log" }
+nebula-render = { path = "../nebula-render" }
+bytemuck = { workspace = true }
+winit = { workspace = true }
+pollster = { workspace = true }
+wgpu = { workspace = true }
