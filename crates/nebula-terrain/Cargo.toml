@@ -8,5 +8,6 @@ license.workspace = true
 noise = "0.9"
 glam = { workspace = true }
 nebula-voxel = { path = "../nebula-voxel" }
+nebula-cubesphere = { path = "../nebula-cubesphere" }
 hashbrown = "0.15"
 thiserror = { workspace = true }

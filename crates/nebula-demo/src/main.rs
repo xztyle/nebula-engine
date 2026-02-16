@@ -1504,6 +1504,60 @@ fn demonstrate_heightmap() -> (f64, f64) {
     (min_h, max_h)
 }
 
+/// Demonstrates cubesphere terrain height sampling across all cube faces.
+fn demonstrate_cubesphere_terrain_height() {
+    use nebula_cubesphere::{CubeFace, FaceCoord, face_coord_to_sphere_everitt};
+    use nebula_terrain::{HeightmapParams, TerrainHeightConfig, TerrainHeightSampler};
+
+    info!("Starting cubesphere terrain height demonstration");
+
+    let sampler = TerrainHeightSampler::new(
+        HeightmapParams {
+            seed: 42,
+            octaves: 6,
+            amplitude: 4000.0,
+            base_frequency: 0.001,
+            ..Default::default()
+        },
+        TerrainHeightConfig::default(),
+    );
+
+    let mut min_h = f64::MAX;
+    let mut max_h = f64::MIN;
+    let mut total_samples = 0u64;
+
+    // Sample terrain across all 6 cube faces
+    for face in CubeFace::ALL {
+        for u_step in 0..=20 {
+            for v_step in 0..=20 {
+                let u = u_step as f64 / 20.0;
+                let v = v_step as f64 / 20.0;
+                let fc = FaceCoord::new(face, u, v);
+                let sphere_pt = face_coord_to_sphere_everitt(&fc);
+                let h = sampler.sample_height(sphere_pt);
+                min_h = min_h.min(h);
+                max_h = max_h.max(h);
+                total_samples += 1;
+            }
+        }
+    }
+
+    info!(
+        "Cubesphere terrain: {total_samples} samples across 6 faces, \
+         height range [{min_h:.1}, {max_h:.1}]"
+    );
+
+    // Verify radius at a sample point
+    let sample_pt = glam::DVec3::new(1.0, 0.0, 0.0);
+    let radius = sampler.sample_radius(sample_pt);
+    info!(
+        "Sample radius at +X: {radius:.1} (base: {})",
+        sampler.config().planet_radius
+    );
+
+    info!("Cubesphere terrain height demonstration completed successfully");
+}
+
 /// Configure system ordering constraints for all engine stages.
 fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
@@ -1630,6 +1684,9 @@ fn main() {
 
     // Demonstrate biome system
     let biome_count = demonstrate_biome_system();
+
+    // Demonstrate cubesphere terrain height
+    demonstrate_cubesphere_terrain_height();
 
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
