@@ -1143,6 +1143,101 @@ fn demonstrate_async_meshing() -> (usize, usize) {
     (results.len(), total_quads)
 }
 
+/// Demonstrates cubesphere vertex displacement: transforms flat chunk mesh
+/// vertices onto the planet's curved surface.
+fn demonstrate_cubesphere_displacement() -> (usize, f64, f64) {
+    use nebula_cubesphere::{ChunkAddress as CsChunkAddress, CubeFace};
+    use nebula_mesh::{
+        ChunkVertex, FaceDirection, PackedChunkMesh, PlanetParams,
+        displace_to_cubesphere, displace_vertex,
+    };
+
+    info!("Starting cubesphere vertex displacement demonstration");
+
+    // A 1000-meter radius planet with 1m voxels
+    let planet = PlanetParams::new(1000.0, 1.0);
+
+    // Build a surface slab on the +X face at LOD 10 (1024 chunks per axis)
+    let chunk_addr = CsChunkAddress::new(CubeFace::PosX, 10, 0, 0);
+
+    let mut mesh = PackedChunkMesh::new();
+    // Create a flat 32×32 surface at y=0 (ground level)
+    for x in 0..32u8 {
+        for z in 0..32u8 {
+            mesh.push_quad(
+                [
+                    ChunkVertex::new([x, 0, z], FaceDirection::PosY, 0, 1, [0, 0]),
+                    ChunkVertex::new([x + 1, 0, z], FaceDirection::PosY, 0, 1, [1, 0]),
+                    ChunkVertex::new([x + 1, 0, z + 1], FaceDirection::PosY, 0, 1, [1, 1]),
+                    ChunkVertex::new([x, 0, z + 1], FaceDirection::PosY, 0, 1, [0, 1]),
+                ],
+                false,
+            );
+        }
+    }
+
+    let vertex_count = mesh.vertices.len();
+    info!(
+        "Flat mesh: {} vertices, {} triangles",
+        vertex_count,
+        mesh.triangle_count()
+    );
+
+    // Displace onto cubesphere
+    let buf = displace_to_cubesphere(&mesh, &chunk_addr, &planet);
+    assert_eq!(buf.len(), vertex_count);
+
+    // Measure displacement statistics
+    let mut min_dist = f64::MAX;
+    let mut max_dist = f64::MIN;
+    for pos in &buf.positions {
+        let d =
+            ((pos[0] as f64).powi(2) + (pos[1] as f64).powi(2) + (pos[2] as f64).powi(2)).sqrt();
+        min_dist = min_dist.min(d);
+        max_dist = max_dist.max(d);
+    }
+
+    info!(
+        "Displaced {} vertices onto cubesphere: distance range [{:.2}, {:.2}] (radius={})",
+        buf.len(),
+        min_dist,
+        max_dist,
+        planet.radius
+    );
+    info!(
+        "Displacement buffer: {} bytes ({} bytes/vertex)",
+        buf.byte_size(),
+        buf.byte_size() / buf.len().max(1)
+    );
+
+    // Verify all six faces work
+    for face in CubeFace::ALL {
+        let addr = CsChunkAddress::new(face, 10, 0, 0);
+        let pos = displace_vertex([16, 0, 16], &addr, &planet);
+        let dir = pos.normalize();
+        let normal = face.normal();
+        assert!(
+            dir.dot(normal) > 0.0,
+            "Vertex on {face:?} should be in correct hemisphere"
+        );
+    }
+    info!("All 6 cube faces displace to correct hemispheres");
+
+    // Verify boundary alignment between adjacent chunks
+    let addr_a = CsChunkAddress::new(CubeFace::PosX, 10, 0, 0);
+    let addr_b = CsChunkAddress::new(CubeFace::PosX, 10, 1, 0);
+    let pos_a = displace_vertex([32, 0, 16], &addr_a, &planet);
+    let pos_b = displace_vertex([0, 0, 16], &addr_b, &planet);
+    let boundary_error = (pos_a - pos_b).length();
+    info!(
+        "Boundary alignment error: {:.2e} meters (should be ~0)",
+        boundary_error
+    );
+
+    info!("Cubesphere vertex displacement demonstration completed successfully");
+    (vertex_count, min_dist, max_dist)
+}
+
 /// Demonstrates mesh cache invalidation: version tracking and boundary detection.
 fn demonstrate_mesh_invalidation() -> (usize, usize, usize) {
     use nebula_mesh::{ChunkMeshState, MeshInvalidator};
@@ -1307,6 +1402,9 @@ fn main() {
     // Demonstrate mesh cache invalidation
     let (inv_interior, inv_boundary, inv_corner) = demonstrate_mesh_invalidation();
 
+    // Demonstrate cubesphere vertex displacement
+    let (disp_verts, disp_min, disp_max) = demonstrate_cubesphere_displacement();
+
     // Log initial state
     let mut demo_state = DemoState::new();
     let initial_sector = SectorCoord::from_world(&demo_state.position);
@@ -1344,8 +1442,8 @@ fn main() {
         async_quads,
     );
     config.window.title = format!(
-        "{} - Invalidation: int={}/bnd={}/crn={}",
-        config.window.title, inv_interior, inv_boundary, inv_corner,
+        "{} - Invalidation: int={}/bnd={}/crn={} - CubeDisp: {}v [{:.0},{:.0}]",
+        config.window.title, inv_interior, inv_boundary, inv_corner, disp_verts, disp_min, disp_max,
     );
 
     info!(

@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 nebula-voxel = { path = "../nebula-voxel" }
+nebula-cubesphere = { path = "../nebula-cubesphere" }
+glam = { workspace = true }
 bytemuck = { workspace = true }
 static_assertions = { workspace = true }
 crossbeam-channel = { workspace = true }

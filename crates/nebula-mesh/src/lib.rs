@@ -3,6 +3,7 @@
 pub mod ambient_occlusion;
 pub mod async_mesh;
 pub mod chunk_mesh;
+pub mod displacement;
 pub mod face_direction;
 pub mod greedy;
 pub mod invalidation;
@@ -23,4 +24,5 @@ pub use visibility::{compute_visible_faces, count_total_faces, count_visible_fac
 pub use visible_faces::VisibleFaces;
 
 pub use async_mesh::{MeshingPipeline, MeshingResult, MeshingTask};
+pub use displacement::{DisplacementBuffer, PlanetParams, displace_to_cubesphere, displace_vertex};
 pub use invalidation::{ChunkMeshState, MeshInvalidator};
