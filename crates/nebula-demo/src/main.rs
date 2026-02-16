@@ -7,7 +7,7 @@
 use clap::Parser;
 use nebula_config::{CliArgs, Config};
 use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldPosition};
-use nebula_render::{ShaderLibrary, load_shader};
+use nebula_render::{Aabb, Camera, FrustumCuller, ShaderLibrary, load_shader};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use tracing::info;
@@ -212,6 +212,40 @@ fn demonstrate_shader_loading() {
     info!("Shader loading demonstration completed successfully");
 }
 
+/// Demonstrates frustum culling by scattering 100 cubes around the camera
+/// and counting how many are culled.
+fn demonstrate_frustum_culling() {
+    use glam::Vec3;
+
+    info!("Starting frustum culling demonstration");
+
+    let camera = Camera::default();
+    let vp = camera.view_projection_matrix();
+    let culler = FrustumCuller::new(&vp);
+
+    let mut rng = Xoshiro256StarStar::seed_from_u64(99);
+    let total = 100;
+    let mut culled = 0;
+
+    for _ in 0..total {
+        // Scatter cubes in a sphere of radius 50 around the camera
+        let x: f32 = rng.gen_range(-50.0..50.0);
+        let y: f32 = rng.gen_range(-50.0..50.0);
+        let z: f32 = rng.gen_range(-50.0..50.0);
+        let half = 0.5;
+        let aabb = Aabb::new(
+            Vec3::new(x - half, y - half, z - half),
+            Vec3::new(x + half, y + half, z + half),
+        );
+        if !culler.is_visible(&aabb) {
+            culled += 1;
+        }
+    }
+
+    info!("Culled: {culled}/{total} objects");
+    info!("Frustum culling demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -235,6 +269,9 @@ fn main() {
 
     // Demonstrate shader loading functionality
     demonstrate_shader_loading();
+
+    // Demonstrate frustum culling
+    demonstrate_frustum_culling();
 
     // Log initial state
     let mut demo_state = DemoState::new();

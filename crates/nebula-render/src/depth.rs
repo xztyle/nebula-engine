@@ -108,7 +108,9 @@ mod tests {
 
     #[test]
     fn test_depth_texture_dimensions_match_surface() {
-        let Some(device) = create_test_device() else { return; };
+        let Some(device) = create_test_device() else {
+            return;
+        };
         let depth = DepthBuffer::new(&device, 1920, 1080);
         assert_eq!(depth.width(), 1920);
         assert_eq!(depth.height(), 1080);
@@ -132,7 +134,9 @@ mod tests {
 
     #[test]
     fn test_resize_updates_dimensions() {
-        let Some(device) = create_test_device() else { return; };
+        let Some(device) = create_test_device() else {
+            return;
+        };
         let mut depth = DepthBuffer::new(&device, 800, 600);
         assert_eq!(depth.width(), 800);
         assert_eq!(depth.height(), 600);
@@ -144,7 +148,9 @@ mod tests {
 
     #[test]
     fn test_resize_noop_when_same_dimensions() {
-        let Some(device) = create_test_device() else { return; };
+        let Some(device) = create_test_device() else {
+            return;
+        };
         let mut depth = DepthBuffer::new(&device, 800, 600);
 
         // Store the original dimensions to verify they don't change
@@ -162,7 +168,9 @@ mod tests {
 
     #[test]
     fn test_depth_texture_has_render_attachment_usage() {
-        let Some(device) = create_test_device() else { return; };
+        let Some(device) = create_test_device() else {
+            return;
+        };
         let depth = DepthBuffer::new(&device, 800, 600);
         let usage = depth.texture.usage();
         assert!(usage.contains(wgpu::TextureUsages::RENDER_ATTACHMENT));
@@ -170,7 +178,9 @@ mod tests {
 
     #[test]
     fn test_depth_texture_has_texture_binding_usage() {
-        let Some(device) = create_test_device() else { return; };
+        let Some(device) = create_test_device() else {
+            return;
+        };
         let depth = DepthBuffer::new(&device, 800, 600);
         let usage = depth.texture.usage();
         assert!(usage.contains(wgpu::TextureUsages::TEXTURE_BINDING));

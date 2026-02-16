@@ -3,6 +3,7 @@
 pub mod buffer;
 pub mod camera;
 pub mod depth;
+pub mod frustum;
 pub mod gpu;
 pub mod pass;
 pub mod pipeline;
@@ -16,6 +17,7 @@ pub use buffer::{
 };
 pub use camera::{Camera, Projection};
 pub use depth::DepthBuffer;
+pub use frustum::{Aabb, Frustum, FrustumCuller};
 pub use gpu::{RenderContext, RenderContextError, SurfaceError, init_render_context_blocking};
 pub use pass::{DepthAttachmentConfig, FrameEncoder, RenderPassBuilder, SKY_BLUE};
 pub use pipeline::{CameraUniform, UNLIT_SHADER_SOURCE, UnlitPipeline, draw_unlit};
