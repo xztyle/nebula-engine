@@ -83,6 +83,11 @@ impl Frustum {
         Self { planes }
     }
 
+    /// Returns the six frustum planes (for interop with other culling systems).
+    pub fn planes(&self) -> [Vec4; 6] {
+        self.planes
+    }
+
     /// Test whether an AABB is at least partially inside the frustum.
     ///
     /// Uses the p-vertex (positive vertex) method: for each plane, find

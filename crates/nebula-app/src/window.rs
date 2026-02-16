@@ -11,7 +11,7 @@ use crate::game_loop::GameLoop;
 use bytemuck;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
-use nebula_lighting::DirectionalLight;
+use nebula_lighting::{DirectionalLight, PointLight, PointLightFrustum, PointLightManager};
 use nebula_planet::{
     AtmosphereParams, AtmosphereRenderer, DayNightState, ImpostorConfig, ImpostorRenderer,
     ImpostorState, LocalFrustum, OceanParams, OceanRenderer, OrbitalRenderer, OriginManager,
@@ -135,6 +135,10 @@ pub struct AppState {
     pub light_buffer: Option<wgpu::Buffer>,
     /// Bind group for the directional light uniform.
     pub light_bind_group: Option<wgpu::BindGroup>,
+    /// Point light manager for local light sources.
+    pub point_light_manager: PointLightManager,
+    /// GPU storage buffer for point lights.
+    pub point_light_buffer: Option<wgpu::Buffer>,
     /// Atmosphere scattering renderer.
     pub atmosphere_renderer: Option<AtmosphereRenderer>,
     /// Atmosphere bind group (recreated on depth buffer resize).
@@ -218,6 +222,8 @@ impl AppState {
             sun_light: DirectionalLight::default(),
             light_buffer: None,
             light_bind_group: None,
+            point_light_manager: PointLightManager::new(),
+            point_light_buffer: None,
             atmosphere_renderer: None,
             atmosphere_bind_group: None,
             day_night: DayNightState::new(1200.0), // 20 minutes per day
@@ -288,6 +294,8 @@ impl AppState {
             sun_light: DirectionalLight::default(),
             light_buffer: None,
             light_bind_group: None,
+            point_light_manager: PointLightManager::new(),
+            point_light_buffer: None,
             atmosphere_renderer: None,
             atmosphere_bind_group: None,
             day_night: DayNightState::new(1200.0), // 20 minutes per day
@@ -737,17 +745,42 @@ impl AppState {
                 contents: bytemuck::cast_slice(&[light_uniform]),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
+        // Create point light storage buffer (header + max lights).
+        let point_light_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("point-light-storage"),
+            size: PointLightManager::BUFFER_SIZE,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // Initialize header to zero lights.
+        let zero_header = nebula_lighting::PointLightHeader {
+            count: 0,
+            _pad: [0; 3],
+        };
+        gpu.queue
+            .write_buffer(&point_light_buffer, 0, bytemuck::cast_slice(&[zero_header]));
+
         let light_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("directional-light-bind-group"),
             layout: &planet_pipeline.light_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: light_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: light_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: point_light_buffer.as_entire_binding(),
+                },
+            ],
         });
         self.light_buffer = Some(light_buffer);
         self.light_bind_group = Some(light_bind_group);
+        self.point_light_buffer = Some(point_light_buffer);
+
         let planet = PlanetFaces::new_demo(1, 42);
+        // Add demo point lights on the planet surface.
+        self.initialize_demo_point_lights(planet.planet_radius as f32);
         let planet_radius = planet.planet_radius;
         let (vertices, indices) = planet.visible_render_data();
         if vertices.is_empty() {
@@ -791,6 +824,30 @@ impl AppState {
         self.planet_camera_buffer = Some(buffer);
         self.planet_camera_bind_group = Some(bind_group);
         self.planet_pipeline = Some(planet_pipeline);
+    }
+
+    /// Place demo point lights at intervals on the planet surface.
+    fn initialize_demo_point_lights(&mut self, planet_radius: f32) {
+        // Place 12 warm-orange point lights around the equator.
+        let count = 12;
+        for i in 0..count {
+            let angle = (i as f32 / count as f32) * std::f32::consts::TAU;
+            let x = angle.cos() * planet_radius;
+            let z = angle.sin() * planet_radius;
+            // Slightly above surface.
+            let dir = glam::Vec3::new(x, 0.0, z).normalize();
+            let pos = dir * (planet_radius + 1.0);
+            self.point_light_manager.add(PointLight {
+                position: pos,
+                color: glam::Vec3::new(1.0, 0.7, 0.3), // warm orange
+                intensity: 3.0,
+                radius: 30.0,
+            });
+        }
+        info!(
+            "Demo point lights: {} placed on planet surface",
+            self.point_light_manager.len()
+        );
     }
 
     /// Updates the debug state with current frame metrics.
@@ -1495,6 +1552,26 @@ impl ApplicationHandler for AppState {
                                             lb,
                                             0,
                                             bytemuck::cast_slice(&[light_u]),
+                                        );
+                                    }
+
+                                    // Upload point lights (cull against current frustum).
+                                    if let Some(pl_buf) = &self.point_light_buffer {
+                                        let cam_dist_f64 = planet_radius as f64 + altitude as f64;
+                                        let cam_pos = glam::Vec3::new(
+                                            (orbit_angle.cos() * 0.4_f64.cos() * cam_dist_f64)
+                                                as f32,
+                                            (0.4_f64.sin() * cam_dist_f64) as f32,
+                                            (orbit_angle.sin() * 0.4_f64.cos() * cam_dist_f64)
+                                                as f32,
+                                        );
+                                        let pl_frustum =
+                                            PointLightFrustum::from_planes(frustum.planes());
+                                        self.point_light_manager.cull_and_upload(
+                                            cam_pos,
+                                            &pl_frustum,
+                                            &gpu.queue,
+                                            pl_buf,
                                         );
                                     }
                                 }
