@@ -1755,6 +1755,63 @@ fn demonstrate_feature_placement() -> usize {
     total
 }
 
+/// Demonstrates async chunk generation: offloads terrain generation to background threads.
+fn demonstrate_async_chunk_generation() -> (usize, u64) {
+    use nebula_coords::WorldPosition;
+    use nebula_terrain::{AsyncChunkGenerator, GenerationTask};
+
+    info!("Starting async chunk generation demonstration");
+
+    let planet = PlanetDef::earth_like("AsyncTerra", WorldPosition::default(), 42);
+    let generator = AsyncChunkGenerator::new(4, 64, 128);
+
+    let grid_size = 5_i64;
+    let mut submitted = 0usize;
+    for x in 0..grid_size {
+        for z in 0..grid_size {
+            let addr = ChunkAddress::new(x, 0, z, 0);
+            let task = GenerationTask {
+                address: addr,
+                seed: planet.seed,
+                planet: planet.clone(),
+                priority: (x * x + z * z) as u64,
+            };
+            if generator.submit(task).is_ok() {
+                submitted += 1;
+            }
+        }
+    }
+
+    let start = std::time::Instant::now();
+    let mut received = Vec::new();
+    let deadline = start + std::time::Duration::from_secs(30);
+    while received.len() < submitted && std::time::Instant::now() < deadline {
+        received.extend(generator.drain_results());
+        if received.len() < submitted {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+    let elapsed_ms = start.elapsed().as_millis() as u64;
+
+    let total_gen_us: u64 = received.iter().map(|r| r.generation_time_us).sum();
+
+    info!(
+        "Generated: {} chunks in {}ms (4 workers), total gen time: {}us",
+        received.len(),
+        elapsed_ms,
+        total_gen_us,
+    );
+
+    assert_eq!(
+        received.len(),
+        submitted,
+        "Should receive all submitted chunks"
+    );
+
+    info!("Async chunk generation demonstration completed successfully");
+    (received.len(), elapsed_ms)
+}
+
 /// Configure system ordering constraints for all engine stages.
 fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
@@ -1890,6 +1947,9 @@ fn main() {
 
     // Demonstrate feature placement
     let feature_count = demonstrate_feature_placement();
+
+    // Demonstrate async chunk generation
+    let (async_gen_chunks, async_gen_ms) = demonstrate_async_chunk_generation();
 
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
@@ -2082,7 +2142,7 @@ fn main() {
         async_quads,
     );
     config.window.title = format!(
-        "{} - Invalidation: int={}/bnd={}/crn={} - CubeDisp: {}v [{:.0},{:.0}] - Biomes: {} - Features: {} - Entities: {}",
+        "{} - Invalidation: int={}/bnd={}/crn={} - CubeDisp: {}v [{:.0},{:.0}] - Biomes: {} - Features: {} - AsyncGen: {}chunks/{}ms - Entities: {}",
         config.window.title,
         inv_interior,
         inv_boundary,
@@ -2092,6 +2152,8 @@ fn main() {
         disp_max,
         biome_count,
         feature_count,
+        async_gen_chunks,
+        async_gen_ms,
         entity_count,
     );
 

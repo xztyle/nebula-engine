@@ -1,5 +1,6 @@
 //! Procedural terrain generation: multi-octave noise, biome assignment, and terrain generation pipeline.
 
+mod async_generation;
 mod cave;
 mod feature;
 mod heightmap;
@@ -8,6 +9,9 @@ mod terrain_height;
 
 pub mod biome;
 
+pub use async_generation::{
+    AsyncChunkGenerator, GeneratedChunk, GenerationTask, generate_chunk_sync,
+};
 pub use biome::{
     BiomeDef, BiomeId, BiomeRegistry, BiomeRegistryError, BiomeSampler, WhittakerDiagram,
     WhittakerRegion,

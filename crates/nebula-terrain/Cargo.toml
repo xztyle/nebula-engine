@@ -9,7 +9,11 @@ noise = "0.9"
 glam = { workspace = true }
 nebula-voxel = { path = "../nebula-voxel" }
 nebula-cubesphere = { path = "../nebula-cubesphere" }
+nebula-math = { path = "../nebula-math" }
 hashbrown = "0.15"
 thiserror = { workspace = true }
 rand = "0.9"
 rand_chacha = "0.9"
+crossbeam-channel = { workspace = true }
+dashmap = { workspace = true }
+num_cpus = { workspace = true }
