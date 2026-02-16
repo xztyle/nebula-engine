@@ -12,8 +12,8 @@ use bytemuck;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
 use nebula_planet::{
-    AtmosphereParams, AtmosphereRenderer, DayNightState, LocalFrustum, PlanetFaces,
-    create_orbit_camera,
+    AtmosphereParams, AtmosphereRenderer, DayNightState, LocalFrustum, OrbitalRenderer,
+    PlanetFaces, create_orbit_camera, generate_orbital_sphere,
 };
 use nebula_render::{
     BufferAllocator, Camera, CameraUniform, DepthBuffer, FrameEncoder, IndexData, MeshBuffer,
@@ -126,6 +126,10 @@ pub struct AppState {
     pub atmosphere_bind_group: Option<wgpu::BindGroup>,
     /// Day/night cycle state (20-minute default cycle).
     pub day_night: DayNightState,
+    /// Orbital planet renderer (textured sphere for orbit view).
+    pub orbital_renderer: Option<OrbitalRenderer>,
+    /// Rotation angle for the orbital planet (radians).
+    pub orbital_rotation: f32,
 }
 
 impl AppState {
@@ -169,6 +173,8 @@ impl AppState {
             atmosphere_renderer: None,
             atmosphere_bind_group: None,
             day_night: DayNightState::new(1200.0), // 20 minutes per day
+            orbital_renderer: None,
+            orbital_rotation: 0.0,
         }
     }
 
@@ -219,6 +225,8 @@ impl AppState {
             atmosphere_renderer: None,
             atmosphere_bind_group: None,
             day_night: DayNightState::new(1200.0), // 20 minutes per day
+            orbital_renderer: None,
+            orbital_rotation: 0.0,
         }
     }
 
@@ -423,6 +431,9 @@ impl AppState {
         self.atmosphere_renderer = Some(atmo_renderer);
         self.atmosphere_bind_group = Some(atmo_bind_group);
 
+        // --- Orbital planet renderer ---
+        self.initialize_orbital_renderer(gpu, planet_radius);
+
         self.unlit_pipeline = Some(unlit_pipeline);
         self.triangle_mesh = Some(triangle_mesh);
         self.back_triangle_mesh = Some(back_triangle_mesh);
@@ -436,6 +447,38 @@ impl AppState {
         info!(
             "Rendering pipeline initialized successfully with depth buffer, textured quad, cube faces, and planet face"
         );
+    }
+
+    /// Initialize the orbital planet renderer (textured icosphere for orbit view).
+    fn initialize_orbital_renderer(&mut self, gpu: &RenderContext, planet_radius: f32) {
+        use nebula_planet::orbital::texture::create_default_samplers;
+
+        let mesh = generate_orbital_sphere(5);
+        let (terrain, biome) = create_default_samplers(42, planet_radius as f64);
+        let tex_width = 512;
+        let tex_height = 256;
+        let terrain_pixels =
+            nebula_planet::generate_terrain_color_texture(&terrain, &biome, tex_width, tex_height);
+
+        let orbital = OrbitalRenderer::new(
+            &gpu.device,
+            &gpu.queue,
+            gpu.surface_format,
+            &mesh,
+            &terrain_pixels,
+            tex_width,
+            tex_height,
+            planet_radius,
+        );
+
+        info!(
+            "Orbital renderer initialized: {} vertices, {} triangles, {}x{} texture",
+            mesh.positions.len(),
+            mesh.indices.len() / 3,
+            tex_width,
+            tex_height
+        );
+        self.orbital_renderer = Some(orbital);
     }
 
     /// Initialize six-face planet terrain rendering.
@@ -681,12 +724,15 @@ impl ApplicationHandler for AppState {
                 let camera_buffer = &self.camera_buffer;
                 let gpu = &self.gpu;
                 let day_night = &mut self.day_night;
+                let orbital_rotation = &mut self.orbital_rotation;
 
                 self.game_loop.tick(
                     |dt, _sim_time| {
                         *tick_count += 1;
                         *camera_time += dt;
                         day_night.tick(dt);
+                        // Slow planet rotation (~1 revolution per 10 minutes)
+                        *orbital_rotation += (dt as f32) * 0.01;
 
                         // Update camera to orbit around the triangle
                         let orbit_radius = 3.0f64;
@@ -740,6 +786,45 @@ impl ApplicationHandler for AppState {
                                 Arc::new(gpu.queue.clone()),
                                 surface_texture,
                             );
+
+                            // === Pass 0: Orbital planet sphere ===
+                            if let (Some(orbital), Some(depth_buffer)) =
+                                (&self.orbital_renderer, &self.depth_buffer)
+                            {
+                                let aspect = self.surface_width() as f32
+                                    / self.surface_height().max(1) as f32;
+                                let orbit_angle = self.camera_time * 0.3;
+                                let planet_radius = self
+                                    .planet_faces
+                                    .as_ref()
+                                    .map(|p| p.planet_radius as f32)
+                                    .unwrap_or(200.0);
+                                let altitude = planet_radius * 3.0; // farther for orbital view
+                                let vp = create_orbit_camera(
+                                    planet_radius,
+                                    altitude,
+                                    orbit_angle,
+                                    0.4,
+                                    aspect,
+                                );
+
+                                orbital.update(
+                                    &gpu.queue,
+                                    vp,
+                                    glam::Vec3::ZERO,
+                                    self.day_night.sun_direction,
+                                    self.orbital_rotation,
+                                );
+
+                                let pb = RenderPassBuilder::new()
+                                    .clear_color(clear_color)
+                                    .depth(depth_buffer.view.clone(), DepthBuffer::CLEAR_VALUE)
+                                    .label("orbital-planet-pass");
+                                {
+                                    let mut pass = frame_encoder.begin_render_pass(&pb);
+                                    orbital.render(&mut pass);
+                                }
+                            }
 
                             // === Pass 1: Six-face planet with two-level frustum culling ===
                             if let (Some(pipeline), Some(bind_group), Some(depth_buffer)) = (
@@ -813,7 +898,7 @@ impl ApplicationHandler for AppState {
                                 }
                                 if let Some(planet_mesh) = &self.planet_face_mesh {
                                     let pb = RenderPassBuilder::new()
-                                        .clear_color(clear_color)
+                                        .preserve_color()
                                         .depth(depth_buffer.view.clone(), DepthBuffer::CLEAR_VALUE)
                                         .label("planet-six-face-pass");
                                     {
