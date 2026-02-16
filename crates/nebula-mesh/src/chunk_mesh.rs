@@ -184,6 +184,85 @@ impl ChunkMesh {
     pub fn quad_count(&self) -> usize {
         self.quads.len()
     }
+
+    /// Returns the number of triangles in the mesh.
+    pub fn triangle_count(&self) -> usize {
+        self.indices.len() / 3
+    }
+
+    /// Scale all vertex positions from grid coordinates to world coordinates.
+    ///
+    /// At LOD N, each grid unit corresponds to `2^N` base voxel units.
+    pub fn scale_vertices(&mut self, voxel_scale: f32) {
+        if (voxel_scale - 1.0).abs() < f32::EPSILON {
+            return;
+        }
+        for vertex in &mut self.vertices {
+            vertex.position[0] *= voxel_scale;
+            vertex.position[1] *= voxel_scale;
+            vertex.position[2] *= voxel_scale;
+        }
+    }
+
+    /// Returns `true` if any triangle has zero area (degenerate).
+    pub fn has_degenerate_triangles(&self) -> bool {
+        for tri in self.indices.chunks_exact(3) {
+            let v0 = self.vertices[tri[0] as usize].position;
+            let v1 = self.vertices[tri[1] as usize].position;
+            let v2 = self.vertices[tri[2] as usize].position;
+
+            // Cross product of edges.
+            let e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+            let e2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
+            let cross = [
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
+            ];
+            let area_sq = cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2];
+            if area_sq < f32::EPSILON {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Returns `true` if all quad pairs of triangles have consistent winding
+    /// (both triangles in a quad produce cross products pointing the same way).
+    pub fn has_consistent_winding(&self) -> bool {
+        // For each quad, check that both triangles' cross products point
+        // in the same general direction (dot product > 0).
+        for qi in 0..self.quads.len() {
+            let tri_base = qi * 6;
+            if tri_base + 5 >= self.indices.len() {
+                continue;
+            }
+
+            let cross_for_tri = |offset: usize| -> [f32; 3] {
+                let i0 = self.indices[tri_base + offset] as usize;
+                let i1 = self.indices[tri_base + offset + 1] as usize;
+                let i2 = self.indices[tri_base + offset + 2] as usize;
+                let v0 = self.vertices[i0].position;
+                let v1 = self.vertices[i1].position;
+                let v2 = self.vertices[i2].position;
+                let e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+                let e2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
+                [
+                    e1[1] * e2[2] - e1[2] * e2[1],
+                    e1[2] * e2[0] - e1[0] * e2[2],
+                    e1[0] * e2[1] - e1[1] * e2[0],
+                ]
+            };
+
+            let c1 = cross_for_tri(0);
+            let c2 = cross_for_tri(3);
+            let dot = c1[0] * c2[0] + c1[1] * c2[1] + c1[2] * c2[2];
+            if dot < 0.0 {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 impl Default for ChunkMesh {

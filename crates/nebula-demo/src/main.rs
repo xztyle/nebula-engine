@@ -2156,6 +2156,48 @@ fn demonstrate_quadtree_lod_per_face() {
     info!("Quadtree LOD per-face demonstration completed successfully");
 }
 
+/// Demonstrates LOD mesh generation: greedy meshing at variable resolutions.
+fn demonstrate_lod_mesh_generation() {
+    use nebula_mesh::{ChunkLodContext, ChunkNeighborhood, default_registry, mesh_lod_chunk};
+    use nebula_voxel::{LodChunkData, VoxelTypeId};
+
+    info!("Starting LOD mesh generation demonstration");
+
+    let registry = default_registry();
+
+    for lod in 0..=2u8 {
+        let mut chunk = LodChunkData::new(lod);
+        let res = chunk.resolution();
+        // Fill bottom half with stone.
+        for z in 0..res {
+            for y in 0..res / 2 {
+                for x in 0..res {
+                    chunk.set(x, y, z, VoxelTypeId(1));
+                }
+            }
+        }
+
+        let mesh = mesh_lod_chunk(
+            &chunk,
+            &ChunkNeighborhood::all_air(),
+            &registry,
+            &ChunkLodContext::uniform(lod),
+        );
+
+        info!(
+            "LOD {}: {} tris, {} quads, {}x{}x{} grid",
+            lod,
+            mesh.triangle_count(),
+            mesh.quad_count(),
+            res,
+            res,
+            res,
+        );
+    }
+
+    info!("LOD mesh generation demonstration completed successfully");
+}
+
 /// Demonstrates LOD transition seam elimination: edge constraining + skirt geometry.
 fn demonstrate_lod_transition_seams() {
     use nebula_mesh::{
@@ -2397,6 +2439,9 @@ fn main() {
 
     // Demonstrate per-face quadtree LOD
     demonstrate_quadtree_lod_per_face();
+
+    // Demonstrate LOD mesh generation
+    demonstrate_lod_mesh_generation();
 
     // Demonstrate LOD transition seam elimination
     demonstrate_lod_transition_seams();
