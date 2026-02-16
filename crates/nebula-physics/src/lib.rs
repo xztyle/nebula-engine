@@ -5,6 +5,7 @@
 
 pub mod physics_bridge;
 pub mod physics_island;
+pub mod voxel_collision;
 
 pub use physics_bridge::{
     PhysicsOrigin, bridge_read_from_rapier, bridge_write_to_rapier, local_to_world,
@@ -13,6 +14,10 @@ pub use physics_bridge::{
 pub use physics_island::{
     ChunkCoord, FrozenPhysicsState, IslandPlayer, IslandWorldPos, PhysicsEligible, PhysicsIsland,
     RigidBodyHandle, physics_island_update_system,
+};
+pub use voxel_collision::{
+    ChunkColliderMap, chunk_to_voxel_collider, create_chunk_collider, remove_chunk_colliders,
+    update_chunk_colliders,
 };
 
 use bevy_ecs::prelude::*;

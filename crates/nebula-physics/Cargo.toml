@@ -9,4 +9,6 @@ rapier3d = "0.32"
 bevy_ecs = { workspace = true }
 glam = { workspace = true }
 nebula-math = { path = "../nebula-math" }
+nebula-voxel = { path = "../nebula-voxel" }
 tracing = "0.1"
+rustc-hash = "2"

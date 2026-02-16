@@ -2520,6 +2520,79 @@ fn demonstrate_horizon_culling() {
     info!("Horizon culling demonstration completed successfully");
 }
 
+/// Demonstrates voxel collision shapes: chunk terrain blocks dynamic objects.
+fn demonstrate_voxel_collision() {
+    use nebula_physics::{
+        ChunkColliderMap, PhysicsWorld, chunk_to_voxel_collider, create_chunk_collider,
+        remove_chunk_colliders,
+    };
+    use rapier3d::prelude::*;
+
+    info!("Starting voxel collision shapes demonstration");
+
+    let mut registry = VoxelTypeRegistry::new();
+    let stone_id = registry
+        .register(VoxelTypeDef {
+            name: "vc_stone".to_string(),
+            solid: true,
+            transparency: Transparency::Opaque,
+            material_index: 1,
+            light_emission: 0,
+        })
+        .unwrap();
+
+    // Create a chunk with a solid floor at y=0.
+    let mut chunk = Chunk::new();
+    for x in 0u8..32 {
+        for z in 0u8..32 {
+            chunk.set(x, 0, z, stone_id);
+        }
+    }
+
+    // Generate collider.
+    let mut physics = PhysicsWorld::new();
+    let collider_handle =
+        create_chunk_collider(&mut physics, &chunk, &registry, glam::Vec3::ZERO, 1.0)
+            .expect("solid chunk should produce collider");
+
+    // Drop a sphere and verify it lands on the floor.
+    let body = RigidBodyBuilder::dynamic()
+        .translation(Vector::new(16.0, 5.0, 16.0))
+        .build();
+    let body_handle = physics.rigid_body_set.insert(body);
+    let ball = ColliderBuilder::ball(0.5).build();
+    physics
+        .collider_set
+        .insert_with_parent(ball, body_handle, &mut physics.rigid_body_set);
+
+    for _ in 0..120 {
+        physics.step();
+    }
+
+    let pos = physics.rigid_body_set[body_handle].translation();
+    info!(
+        "Sphere on voxel floor: y={:.3} (started at 5.0, should rest ~1.5)",
+        pos.y
+    );
+    assert!(pos.y > 0.0 && pos.y < 4.0, "Sphere should rest on floor");
+
+    // Verify empty chunk produces no collider.
+    let empty = Chunk::new();
+    let no_collider = chunk_to_voxel_collider(&empty, &registry, 1.0);
+    assert!(no_collider.is_none(), "Empty chunk should produce None");
+    info!("Empty chunk correctly produces no collider");
+
+    // Verify collider removal.
+    let mut map = ChunkColliderMap::new();
+    let a = ChunkAddress::new(0, 0, 0, 0);
+    map.insert(a, collider_handle);
+    remove_chunk_colliders(&mut physics, &[a], &mut map);
+    assert!(!map.contains(&a));
+    info!("Collider removal works correctly");
+
+    info!("Voxel collision shapes demonstration completed successfully");
+}
+
 /// Demonstrates physics world initialization and stepping.
 fn demonstrate_physics_world() {
     use nebula_physics::PhysicsWorld;
@@ -2813,6 +2886,9 @@ fn main() {
     // Demonstrate horizon culling
     demonstrate_horizon_culling();
     demonstrate_floating_origin();
+
+    // Demonstrate voxel collision shapes
+    demonstrate_voxel_collision();
 
     // Demonstrate physics world initialization and stepping
     demonstrate_physics_world();
