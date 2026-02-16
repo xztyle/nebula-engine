@@ -2156,6 +2156,90 @@ fn demonstrate_quadtree_lod_per_face() {
     info!("Quadtree LOD per-face demonstration completed successfully");
 }
 
+/// Demonstrates the LOD priority queue for chunk generation ordering.
+fn demonstrate_lod_priority_queue() {
+    use nebula_cubesphere::CubeFace;
+    use nebula_lod::{ChunkPriorityFactors, LodPriorityQueue, compute_priority};
+
+    info!("Starting LOD priority queue demonstration");
+
+    let mut queue = LodPriorityQueue::new();
+
+    // Simulate chunks at varying distances and LODs
+    let chunks: Vec<(nebula_cubesphere::ChunkAddress, ChunkPriorityFactors)> = vec![
+        (
+            nebula_cubesphere::ChunkAddress::new(CubeFace::PosY, 10, 0, 0),
+            ChunkPriorityFactors {
+                distance: 50.0,
+                lod: 0,
+                in_frustum: true,
+                direction_dot: 0.9,
+            },
+        ),
+        (
+            nebula_cubesphere::ChunkAddress::new(CubeFace::PosY, 10, 1, 0),
+            ChunkPriorityFactors {
+                distance: 500.0,
+                lod: 2,
+                in_frustum: true,
+                direction_dot: 0.5,
+            },
+        ),
+        (
+            nebula_cubesphere::ChunkAddress::new(CubeFace::NegX, 10, 0, 0),
+            ChunkPriorityFactors {
+                distance: 200.0,
+                lod: 1,
+                in_frustum: false,
+                direction_dot: -0.3,
+            },
+        ),
+        (
+            nebula_cubesphere::ChunkAddress::new(CubeFace::PosZ, 10, 0, 0),
+            ChunkPriorityFactors {
+                distance: 1000.0,
+                lod: 3,
+                in_frustum: true,
+                direction_dot: 0.0,
+            },
+        ),
+    ];
+
+    for (addr, factors) in &chunks {
+        let priority = compute_priority(factors);
+        queue.push(*addr, priority);
+        info!(
+            "  Enqueued {} — dist={:.0}, lod={}, frustum={}, dot={:.1} → priority={:.2}",
+            addr,
+            factors.distance,
+            factors.lod,
+            factors.in_frustum,
+            factors.direction_dot,
+            priority
+        );
+    }
+
+    info!("Queue depth: {}", queue.len());
+
+    // Pop in priority order
+    let mut order = Vec::new();
+    while let Some(addr) = queue.pop() {
+        order.push(addr);
+        info!("  Popped: {}", addr);
+    }
+
+    assert_eq!(order.len(), chunks.len(), "All chunks should be popped");
+    assert!(queue.is_empty(), "Queue should be empty after popping all");
+
+    // Verify closest in-frustum chunk came first
+    assert_eq!(
+        order[0], chunks[0].0,
+        "Closest in-frustum chunk should have highest priority"
+    );
+
+    info!("LOD priority queue demonstration completed successfully");
+}
+
 /// Demonstrates LOD mesh generation: greedy meshing at variable resolutions.
 fn demonstrate_lod_mesh_generation() {
     use nebula_mesh::{ChunkLodContext, ChunkNeighborhood, default_registry, mesh_lod_chunk};
@@ -2439,6 +2523,9 @@ fn main() {
 
     // Demonstrate per-face quadtree LOD
     demonstrate_quadtree_lod_per_face();
+
+    // Demonstrate LOD priority queue
+    demonstrate_lod_priority_queue();
 
     // Demonstrate LOD mesh generation
     demonstrate_lod_mesh_generation();
