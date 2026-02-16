@@ -10,6 +10,7 @@ pub mod invalidation;
 pub mod lod_stitching;
 pub mod neighborhood;
 pub mod packed;
+pub mod vertex_format;
 pub mod visibility;
 pub mod visible_faces;
 
@@ -21,6 +22,7 @@ pub use neighborhood::{
     ChunkBoundaryEdge, ChunkBoundarySlice, ChunkNeighborhood, extract_boundary_slice,
 };
 pub use packed::{ChunkVertex, PackedChunkMesh};
+pub use vertex_format::{CHUNK_VERTEX_ATTRIBUTES, CHUNK_VERTEX_LAYOUT, chunk_vertex_buffer_layout};
 pub use visibility::{compute_visible_faces, count_total_faces, count_visible_faces};
 pub use visible_faces::VisibleFaces;
 

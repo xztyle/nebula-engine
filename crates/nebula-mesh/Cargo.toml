@@ -11,3 +11,7 @@ glam = { workspace = true }
 bytemuck = { workspace = true }
 static_assertions = { workspace = true }
 crossbeam-channel = { workspace = true }
+wgpu = { workspace = true }
+
+[dev-dependencies]
+pollster = { workspace = true }
