@@ -11,7 +11,9 @@ use crate::game_loop::GameLoop;
 use bytemuck;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
-use nebula_planet::{LocalFrustum, PlanetFaces, create_orbit_camera};
+use nebula_planet::{
+    AtmosphereParams, AtmosphereRenderer, LocalFrustum, PlanetFaces, create_orbit_camera,
+};
 use nebula_render::{
     BufferAllocator, Camera, CameraUniform, DepthBuffer, FrameEncoder, IndexData, MeshBuffer,
     RenderContext, RenderPassBuilder, ShaderLibrary, SurfaceWrapper, TEXTURED_SHADER_SOURCE,
@@ -117,6 +119,10 @@ pub struct AppState {
     pub planet_camera_bind_group: Option<wgpu::BindGroup>,
     /// No-cull unlit pipeline for planet terrain (winding may flip on cubesphere).
     pub planet_pipeline: Option<UnlitPipeline>,
+    /// Atmosphere scattering renderer.
+    pub atmosphere_renderer: Option<AtmosphereRenderer>,
+    /// Atmosphere bind group (recreated on depth buffer resize).
+    pub atmosphere_bind_group: Option<wgpu::BindGroup>,
 }
 
 impl AppState {
@@ -157,6 +163,8 @@ impl AppState {
             planet_camera_buffer: None,
             planet_camera_bind_group: None,
             planet_pipeline: None,
+            atmosphere_renderer: None,
+            atmosphere_bind_group: None,
         }
     }
 
@@ -204,6 +212,8 @@ impl AppState {
             planet_camera_buffer: None,
             planet_camera_bind_group: None,
             planet_pipeline: None,
+            atmosphere_renderer: None,
+            atmosphere_bind_group: None,
         }
     }
 
@@ -395,6 +405,18 @@ impl AppState {
 
         // --- Single face planet terrain (before moving unlit_pipeline) ---
         self.initialize_planet_face(gpu, &allocator, &unlit_pipeline);
+
+        // --- Atmosphere scattering renderer ---
+        let planet_radius = self
+            .planet_faces
+            .as_ref()
+            .map(|p| p.planet_radius as f32)
+            .unwrap_or(200.0);
+        let atmo_params = AtmosphereParams::earth_like(planet_radius);
+        let atmo_renderer = AtmosphereRenderer::new(&gpu.device, gpu.surface_format, atmo_params);
+        let atmo_bind_group = atmo_renderer.create_bind_group(&gpu.device, &depth_buffer.view);
+        self.atmosphere_renderer = Some(atmo_renderer);
+        self.atmosphere_bind_group = Some(atmo_bind_group);
 
         self.unlit_pipeline = Some(unlit_pipeline);
         self.triangle_mesh = Some(triangle_mesh);
@@ -589,6 +611,11 @@ impl ApplicationHandler for AppState {
                     // Resize depth buffer
                     if let (Some(depth_buffer), Some(gpu)) = (&mut self.depth_buffer, &self.gpu) {
                         depth_buffer.resize(&gpu.device, w, h);
+                        // Recreate atmosphere bind group with new depth view
+                        if let Some(atmo) = &self.atmosphere_renderer {
+                            self.atmosphere_bind_group =
+                                Some(atmo.create_bind_group(&gpu.device, &depth_buffer.view));
+                        }
                     }
 
                     info!(
@@ -618,6 +645,10 @@ impl ApplicationHandler for AppState {
                         if let (Some(depth_buffer), Some(gpu)) = (&mut self.depth_buffer, &self.gpu)
                         {
                             depth_buffer.resize(&gpu.device, w, h);
+                            if let Some(atmo) = &self.atmosphere_renderer {
+                                self.atmosphere_bind_group =
+                                    Some(atmo.create_bind_group(&gpu.device, &depth_buffer.view));
+                            }
                         }
 
                         info!(
@@ -782,6 +813,66 @@ impl ApplicationHandler for AppState {
                                         let mut pass = frame_encoder.begin_render_pass(&pb);
                                         draw_unlit(&mut pass, pipeline, bind_group, planet_mesh);
                                     }
+                                }
+                            }
+
+                            // === Pass 1.5: Atmosphere scattering (additive over planet) ===
+                            if let (Some(atmo_renderer), Some(atmo_bg)) =
+                                (&self.atmosphere_renderer, &self.atmosphere_bind_group)
+                            {
+                                // Compute atmosphere uniforms from current camera state
+                                let planet_radius = self
+                                    .planet_faces
+                                    .as_ref()
+                                    .map(|p| p.planet_radius as f32)
+                                    .unwrap_or(200.0);
+                                let aspect = self.surface_width() as f32
+                                    / self.surface_height().max(1) as f32;
+                                let orbit_angle = self.camera_time * 0.3;
+                                let vp = create_orbit_camera(
+                                    planet_radius,
+                                    planet_radius * 0.8,
+                                    orbit_angle,
+                                    0.4,
+                                    aspect,
+                                );
+                                let inv_vp = vp.inverse();
+
+                                // Camera position: extract from orbit
+                                let cam_dist = planet_radius + planet_radius * 0.8;
+                                let cam_pos = glam::Vec3::new(
+                                    (orbit_angle.cos() * 0.4_f64.cos() * cam_dist as f64) as f32,
+                                    (0.4_f64.sin() * cam_dist as f64) as f32,
+                                    (orbit_angle.sin() * 0.4_f64.cos() * cam_dist as f64) as f32,
+                                );
+
+                                // Sun direction: slowly rotating
+                                let sun_angle = self.camera_time * 0.1;
+                                let sun_dir = glam::Vec3::new(
+                                    sun_angle.cos() as f32,
+                                    0.5,
+                                    sun_angle.sin() as f32,
+                                )
+                                .normalize();
+
+                                atmo_renderer.update_uniform(
+                                    &gpu.queue,
+                                    glam::Vec3::ZERO, // planet center at origin
+                                    sun_dir,
+                                    cam_pos,
+                                    inv_vp,
+                                    0.1,
+                                    10000.0,
+                                );
+
+                                // Atmosphere pass: additive blend, no depth write
+                                let atmo_pass_builder = RenderPassBuilder::new()
+                                    .preserve_color()
+                                    .label("atmosphere-pass");
+                                {
+                                    let mut atmo_pass =
+                                        frame_encoder.begin_render_pass(&atmo_pass_builder);
+                                    atmo_renderer.render(&mut atmo_pass, atmo_bg);
                                 }
                             }
 
