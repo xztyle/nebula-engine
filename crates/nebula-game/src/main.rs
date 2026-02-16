@@ -2,11 +2,12 @@
 //!
 //! Opens a window with a real-scale Earth planet visible from orbit,
 //! initializes the wgpu renderer, runs the AI Debug API on port 9999,
-//! and provides a free-fly camera for exploring the planet.
+//! and provides a ship with 6DOF Newtonian flight for exploring the planet.
 //!
 //! Run with: `cargo run -p nebula-game`
 
 mod planet;
+mod ship;
 
 use clap::Parser;
 use nebula_config::Config;
@@ -58,22 +59,25 @@ fn main() {
         config.planet.start_altitude_m / 1000.0,
     );
 
+    // Create ship at ISS orbital altitude.
+    let ship_config = ship::ShipConfig::default();
+    let mut ship_state =
+        ship::ShipState::at_orbit(config.planet.radius_m, config.planet.start_altitude_m);
+
+    info!(
+        "Ship: mass={:.0}kg, thrust={:.0}N, pos=({:.0}, {:.0}, {:.0})",
+        ship_config.mass,
+        ship_config.max_thrust,
+        ship_state.position.x,
+        ship_state.position.y,
+        ship_state.position.z,
+    );
+
     // Run the engine: opens window, initializes wgpu, starts debug API on :9999,
     // and enters the fixed-timestep game loop.
-    nebula_app::window::run_with_config_and_input(config, |dt, keyboard, mouse| {
-        game_update(dt, keyboard, mouse);
+    // The callback receives mutable camera access so the ship controls it directly.
+    nebula_app::window::run_with_config_and_input(config, move |dt, keyboard, mouse, camera| {
+        ship::update_ship(&mut ship_state, &ship_config, dt, keyboard, mouse);
+        ship::sync_camera_to_ship(camera, &ship_state);
     });
-}
-
-/// Per-tick game simulation update.
-///
-/// Called at a fixed 60 Hz rate with keyboard and mouse state.
-/// This is where ship physics, planet systems, and game logic will live.
-fn game_update(
-    _dt: f64,
-    _keyboard: &nebula_input::KeyboardState,
-    _mouse: &nebula_input::MouseState,
-) {
-    // TODO(story-03): Ship 6DOF physics from keyboard/mouse input
-    // TODO(story-05): Update HUD state
 }

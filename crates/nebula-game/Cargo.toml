@@ -11,3 +11,6 @@ nebula-app = { path = "../nebula-app" }
 nebula-config = { path = "../nebula-config" }
 nebula-log = { path = "../nebula-log" }
 nebula-input = { path = "../nebula-input" }
+nebula-render = { path = "../nebula-render" }
+glam = { workspace = true }
+winit = { workspace = true }

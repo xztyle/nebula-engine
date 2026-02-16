@@ -71,9 +71,18 @@ pub type UpdateFn = Box<dyn FnMut(f64, f64)>;
 pub type ClearColorFn = Box<dyn FnMut(u64) -> wgpu::Color>;
 /// Custom update function that gets called each simulation tick.
 pub type CustomUpdateFn = Box<dyn FnMut(f64)>;
-/// Custom update function that receives keyboard state each simulation tick.
-pub type CustomInputUpdateFn =
-    Box<dyn FnMut(f64, &nebula_input::KeyboardState, &nebula_input::MouseState)>;
+/// Custom update function that receives keyboard/mouse state and mutable camera each tick.
+///
+/// When set, the built-in free-fly camera is disabled so the callback has full
+/// control over camera position and rotation (e.g. for ship-following cameras).
+pub type CustomInputUpdateFn = Box<
+    dyn FnMut(
+        f64,
+        &nebula_input::KeyboardState,
+        &nebula_input::MouseState,
+        &mut nebula_render::Camera,
+    ),
+>;
 
 /// Application state that manages the window, GPU context, and tracks surface dimensions.
 pub struct AppState {
@@ -1325,6 +1334,8 @@ impl ApplicationHandler for AppState {
                 let chunk_budget = &mut self.chunk_budget;
                 let simulated_altitude = &mut self.simulated_altitude;
                 let planet_config = &self.config.planet;
+                // When a custom input callback is set, it owns the camera.
+                let has_custom_input = custom_input_update.is_some();
 
                 self.game_loop.tick(
                     |dt, _sim_time| {
@@ -1334,7 +1345,7 @@ impl ApplicationHandler for AppState {
                         // Slow planet rotation (~1 revolution per 10 minutes)
                         *orbital_rotation += (dt as f32) * 0.01;
 
-                        if planet_config.free_fly_camera {
+                        if planet_config.free_fly_camera && !has_custom_input {
                             // Free-fly camera: WASD + mouse look
                             let speed = planet_config.camera_speed_m_s as f32 * dt as f32;
 
@@ -1386,7 +1397,7 @@ impl ApplicationHandler for AppState {
                             // Compute altitude for transition system
                             let dist = camera.position.length() as f64;
                             *simulated_altitude = (dist - planet_config.radius_m).max(0.0);
-                        } else {
+                        } else if !has_custom_input {
                             // Simulate altitude oscillation: 0 → 300 km → 0 over ~60s
                             let alt_cycle = (*camera_time * 0.1).sin().abs();
                             *simulated_altitude = alt_cycle * 300_000.0;
@@ -1427,7 +1438,10 @@ impl ApplicationHandler for AppState {
                             update_fn(dt);
                         }
                         if let Some(update_fn) = custom_input_update {
-                            update_fn(dt, keyboard_state, mouse_state);
+                            update_fn(dt, keyboard_state, mouse_state, camera);
+                            // Compute altitude from camera position after custom update
+                            let dist = camera.position.length() as f64;
+                            *simulated_altitude = (dist - planet_config.radius_m).max(0.0);
                         }
                     },
                     |_alpha| {},
@@ -2329,13 +2343,18 @@ where
 #[instrument(skip_all)]
 pub fn run_with_config_and_input<T>(config: Config, mut custom_state: T)
 where
-    T: FnMut(f64, &nebula_input::KeyboardState, &nebula_input::MouseState) + 'static,
+    T: FnMut(
+            f64,
+            &nebula_input::KeyboardState,
+            &nebula_input::MouseState,
+            &mut nebula_render::Camera,
+        ) + 'static,
 {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut app = AppState::with_config(config);
 
-    app.custom_input_update = Some(Box::new(move |dt, kb, ms| {
-        custom_state(dt, kb, ms);
+    app.custom_input_update = Some(Box::new(move |dt, kb, ms, cam| {
+        custom_state(dt, kb, ms, cam);
     }));
 
     event_loop.run_app(&mut app).expect("Event loop failed");

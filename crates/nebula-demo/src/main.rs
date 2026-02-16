@@ -4848,7 +4848,7 @@ fn main() {
         map
     };
 
-    nebula_app::window::run_with_config_and_input(config, move |dt, kb, ms| {
+    nebula_app::window::run_with_config_and_input(config, move |dt, kb, ms, _camera| {
         demo_state.update(dt);
 
         // Poll gamepad events.
