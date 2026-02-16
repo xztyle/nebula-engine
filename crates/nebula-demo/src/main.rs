@@ -1558,6 +1558,55 @@ fn demonstrate_cubesphere_terrain_height() {
     info!("Cubesphere terrain height demonstration completed successfully");
 }
 
+/// Demonstrates ore resource distribution with default ore configurations.
+fn demonstrate_ore_distribution() {
+    use glam::DVec3;
+    use nebula_terrain::{OreDistributor, default_ore_distributions};
+
+    info!("Starting ore resource distribution demonstration");
+
+    let seed = 42u64;
+    let ores = default_ore_distributions();
+    let ore_count = ores.len();
+    let distributor = OreDistributor::new(seed, ores);
+
+    let planet_radius = 6_371_000.0_f64;
+    let surface_height = planet_radius + 100.0;
+
+    // Sample a grid of subsurface voxels and tally ore hits per type.
+    let mut ore_hits: std::collections::HashMap<nebula_voxel::VoxelTypeId, u64> =
+        std::collections::HashMap::new();
+    let total_samples = 100_000u64;
+
+    for i in 0..total_samples {
+        let depth = (i % 500) as f64 + 1.0;
+        let x = (i as f64) * 0.7;
+        let z = (i as f64) * 1.3;
+        let voxel_pos = DVec3::new(surface_height - depth, x, z);
+        if let Some(ore_id) = distributor.sample_ore(voxel_pos, surface_height) {
+            *ore_hits.entry(ore_id).or_insert(0) += 1;
+        }
+    }
+
+    let total_ore: u64 = ore_hits.values().sum();
+    info!(
+        "Ore distribution: {total_samples} samples, {total_ore} ore hits ({:.2}%), {ore_count} ore types registered",
+        (total_ore as f64 / total_samples as f64) * 100.0
+    );
+
+    for (id, count) in &ore_hits {
+        info!("  Ore type {:?}: {count} hits", id);
+    }
+
+    assert!(
+        total_ore > 0,
+        "Expected at least some ore hits in {total_samples} samples"
+    );
+    assert_eq!(distributor.ore_count(), ore_count);
+
+    info!("Ore resource distribution demonstration completed successfully");
+}
+
 /// Configure system ordering constraints for all engine stages.
 fn configure_system_ordering(schedules: &mut nebula_ecs::EngineSchedules) {
     if let Some(s) = schedules.get_schedule_mut(&nebula_ecs::EngineSchedule::PreUpdate) {
@@ -1687,6 +1736,9 @@ fn main() {
 
     // Demonstrate cubesphere terrain height
     demonstrate_cubesphere_terrain_height();
+
+    // Demonstrate ore resource distribution
+    demonstrate_ore_distribution();
 
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
