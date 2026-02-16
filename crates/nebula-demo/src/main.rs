@@ -12,8 +12,8 @@ use nebula_coords::{EntityId, SectorCoord, SpatialEntity, SpatialHashMap, WorldP
 use nebula_cubesphere::PlanetDef;
 use nebula_render::{Aabb, Camera, DrawBatch, DrawCall, FrustumCuller, ShaderLibrary, load_shader};
 use nebula_voxel::{
-    Chunk, ChunkAddress, ChunkData, ChunkManager, Transparency, VoxelTypeDef, VoxelTypeId,
-    VoxelTypeRegistry,
+    Chunk, ChunkAddress, ChunkData, ChunkLoadConfig, ChunkLoader, ChunkManager, Transparency,
+    VoxelTypeDef, VoxelTypeId, VoxelTypeRegistry,
 };
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
@@ -553,6 +553,52 @@ fn demonstrate_chunk_manager() -> (usize, usize) {
     (count, dirty_count)
 }
 
+/// Demonstrates chunk loading/unloading with hysteresis and budgeting.
+fn demonstrate_chunk_loading() -> usize {
+    info!("Starting chunk loading/unloading demonstration");
+
+    let config = ChunkLoadConfig {
+        load_radius: 4,
+        unload_radius: 6,
+        loads_per_tick: 8,
+        unloads_per_tick: 16,
+    };
+    let mut loader = ChunkLoader::new(config);
+    let mut manager = ChunkManager::new();
+
+    // Simulate camera at origin; run several ticks to load nearby chunks.
+    let camera = ChunkAddress::new(0, 0, 0, 0);
+    for tick in 0..20 {
+        let result = loader.tick(camera, &mut manager);
+        if result.loaded > 0 {
+            info!(
+                "  Tick {}: loaded {} chunks (total in manager: {})",
+                tick,
+                result.loaded,
+                manager.loaded_count()
+            );
+        }
+    }
+    let loaded_at_origin = manager.loaded_count();
+    info!(
+        "Loaded {} chunks around origin (radius 4)",
+        loaded_at_origin
+    );
+
+    // Move camera far away — chunks should be unloaded.
+    let far_camera = ChunkAddress::new(20, 0, 0, 0);
+    let result = loader.tick(far_camera, &mut manager);
+    info!(
+        "After camera move: loaded={}, unloaded={}, remaining={}",
+        result.loaded,
+        result.unloaded,
+        manager.loaded_count()
+    );
+
+    info!("Chunk loading/unloading demonstration completed successfully");
+    loaded_at_origin
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -616,6 +662,9 @@ fn main() {
     // Demonstrate chunk manager
     let (chunks_loaded, dirty_count) = demonstrate_chunk_manager();
 
+    // Demonstrate chunk loading/unloading
+    let loaded_count = demonstrate_chunk_loading();
+
     // Log initial state
     let mut demo_state = DemoState::new();
     let initial_sector = SectorCoord::from_world(&demo_state.position);
@@ -623,13 +672,14 @@ fn main() {
     // Update window title to show planet info and nearby count
     let terra = PlanetDef::earth_like("Terra", WorldPosition::default(), 42);
     config.window.title = format!(
-        "Nebula Engine - Planet: {}, radius={} mm - Registry: {} types - Chunks loaded: {} - Dirty chunks: {}/{} - Nearby: {} entities",
+        "Nebula Engine - Planet: {}, radius={} mm - Registry: {} types - Chunks loaded: {} - Dirty: {}/{} - Loaded: {} - Nearby: {} entities",
         terra.name,
         terra.radius,
         voxel_type_count,
         chunks_loaded,
         dirty_count,
         chunks_loaded,
+        loaded_count,
         demo_state.nearby_count
     );
 

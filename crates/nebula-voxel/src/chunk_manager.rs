@@ -14,7 +14,7 @@ use crate::chunk_api::Chunk;
 /// millimetre coordinates divided by chunk size). The `face` field
 /// indicates which cube-sphere face the chunk belongs to (0–5), or a
 /// special value for non-planetary chunks.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ChunkAddress {
     /// Chunk-grid X coordinate.
     pub x: i64,
