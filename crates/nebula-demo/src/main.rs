@@ -2939,6 +2939,10 @@ fn main() {
     let mut tps_cam_pos = nebula_ecs::WorldPos::new(1_000_000, 2_005_000, 505_000);
     let mut tps_cam_rotation = nebula_ecs::Rotation::default();
 
+    // Free-fly debug camera (F1 toggle).
+    let mut free_fly_cam = nebula_player::FreeFlyCam::default();
+    let mut free_fly_overlay = nebula_player::DebugCameraOverlay::default();
+
     // Camera transition state for smooth mode switches.
     let mut cam_transition: Option<nebula_player::CameraTransition> = None;
 
@@ -2995,9 +2999,12 @@ fn main() {
             .and_then(|id| gamepad_mgr.gamepad(id));
         context_stack.resolve(kb, ms, gamepad, &mut action_state);
 
+        // Free-fly debug camera toggle (F1).
+        nebula_player::free_fly_toggle_system(kb, &mut free_fly_cam);
+
         // First-person look: mouse delta → yaw/pitch → rotation quaternion.
-        // (Skipped in spaceship mode and during camera transitions.)
-        if !spaceship_mode && cam_transition.is_none() {
+        // (Skipped in spaceship mode, during camera transitions, and in free-fly mode.)
+        if !spaceship_mode && cam_transition.is_none() && !free_fly_cam.active {
             nebula_player::first_person_look_system(ms, &mut fps_camera, &mut cam_rotation);
         }
 
@@ -3106,7 +3113,32 @@ fn main() {
                     &mut world_pos,
                 );
             }
+            // Free-fly camera: unrestricted noclip movement.
+            if free_fly_cam.active {
+                nebula_player::free_fly_look_system(ms, &mut free_fly_cam, &mut cam_rotation);
+                nebula_player::free_fly_move_system(
+                    kb,
+                    &free_fly_cam,
+                    &cam_rotation,
+                    &mut world_pos,
+                );
+                nebula_player::free_fly_speed_system(ms, kb, &mut free_fly_cam);
+            }
+
             demo_state.position = world_pos.0;
+        }
+
+        // Free-fly overlay (runs every frame, clears when inactive).
+        {
+            let world_pos = nebula_ecs::WorldPos(demo_state.position);
+            nebula_player::free_fly_overlay_system(
+                &free_fly_cam,
+                &world_pos,
+                &mut free_fly_overlay,
+            );
+            if !free_fly_overlay.text.is_empty() {
+                tracing::debug!("Free-fly: {}", free_fly_overlay.text.replace('\n', " | "));
+            }
         }
 
         // Third-person camera: orbit, zoom, follow.
