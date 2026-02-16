@@ -11,6 +11,7 @@ use crate::game_loop::GameLoop;
 use bytemuck;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
+use nebula_lighting::DirectionalLight;
 use nebula_planet::{
     AtmosphereParams, AtmosphereRenderer, DayNightState, ImpostorConfig, ImpostorRenderer,
     ImpostorState, LocalFrustum, OceanParams, OceanRenderer, OrbitalRenderer, OriginManager,
@@ -19,10 +20,10 @@ use nebula_planet::{
 };
 use nebula_render::{
     BloomConfig, BloomPipeline, BufferAllocator, Camera, CameraUniform, DepthBuffer, FrameEncoder,
-    IndexData, MeshBuffer, RenderContext, RenderPassBuilder, ShaderLibrary, SurfaceWrapper,
-    TEXTURED_SHADER_SOURCE, TextureManager, TexturedPipeline, UNLIT_SHADER_SOURCE, UnlitPipeline,
-    VertexPositionColor, VertexPositionNormalUv, draw_textured, draw_unlit,
-    init_render_context_blocking,
+    IndexData, LIT_SHADER_SOURCE, LitPipeline, MeshBuffer, RenderContext, RenderPassBuilder,
+    ShaderLibrary, SurfaceWrapper, TEXTURED_SHADER_SOURCE, TextureManager, TexturedPipeline,
+    UNLIT_SHADER_SOURCE, UnlitPipeline, VertexPositionColor, VertexPositionNormalUv, draw_lit,
+    draw_textured, draw_unlit, init_render_context_blocking,
 };
 use nebula_space::{
     DistantPlanet, ImpostorInstance, NebulaConfig, NebulaGenerator, OrbitalElements,
@@ -126,8 +127,14 @@ pub struct AppState {
     pub planet_camera_buffer: Option<wgpu::Buffer>,
     /// Camera bind group for the planet face view.
     pub planet_camera_bind_group: Option<wgpu::BindGroup>,
-    /// No-cull unlit pipeline for planet terrain (winding may flip on cubesphere).
-    pub planet_pipeline: Option<UnlitPipeline>,
+    /// No-cull lit pipeline for planet terrain with directional light shading.
+    pub planet_pipeline: Option<LitPipeline>,
+    /// Directional light (sun) for planet terrain shading.
+    pub sun_light: DirectionalLight,
+    /// GPU buffer for the directional light uniform.
+    pub light_buffer: Option<wgpu::Buffer>,
+    /// Bind group for the directional light uniform.
+    pub light_bind_group: Option<wgpu::BindGroup>,
     /// Atmosphere scattering renderer.
     pub atmosphere_renderer: Option<AtmosphereRenderer>,
     /// Atmosphere bind group (recreated on depth buffer resize).
@@ -208,6 +215,9 @@ impl AppState {
             planet_camera_buffer: None,
             planet_camera_bind_group: None,
             planet_pipeline: None,
+            sun_light: DirectionalLight::default(),
+            light_buffer: None,
+            light_bind_group: None,
             atmosphere_renderer: None,
             atmosphere_bind_group: None,
             day_night: DayNightState::new(1200.0), // 20 minutes per day
@@ -275,6 +285,9 @@ impl AppState {
             planet_camera_buffer: None,
             planet_camera_bind_group: None,
             planet_pipeline: None,
+            sun_light: DirectionalLight::default(),
+            light_buffer: None,
+            light_bind_group: None,
             atmosphere_renderer: None,
             atmosphere_bind_group: None,
             day_night: DayNightState::new(1200.0), // 20 minutes per day
@@ -695,7 +708,7 @@ impl AppState {
         self.ocean_renderer = Some(ocean);
     }
 
-    /// Initialize six-face planet terrain rendering.
+    /// Initialize six-face planet terrain rendering with directional light shading.
     fn initialize_planet_face(
         &mut self,
         gpu: &RenderContext,
@@ -705,14 +718,35 @@ impl AppState {
         use wgpu::util::DeviceExt;
         let mut shader_library = ShaderLibrary::new();
         let shader = shader_library
-            .load_from_source(&gpu.device, "planet-unlit", UNLIT_SHADER_SOURCE)
-            .expect("Failed to load planet shader");
-        let planet_pipeline = create_no_cull_pipeline(
+            .load_from_source(&gpu.device, "planet-lit", LIT_SHADER_SOURCE)
+            .expect("Failed to load planet lit shader");
+        let planet_pipeline = LitPipeline::new(
             &gpu.device,
             &shader,
             gpu.surface_format,
             Some(DepthBuffer::FORMAT),
+            None, // No culling for cubesphere terrain
         );
+
+        // Create directional light uniform buffer and bind group.
+        let light_uniform = self.sun_light.to_uniform();
+        let light_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("directional-light-uniform"),
+                contents: bytemuck::cast_slice(&[light_uniform]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+        let light_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("directional-light-bind-group"),
+            layout: &planet_pipeline.light_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: light_buffer.as_entire_binding(),
+            }],
+        });
+        self.light_buffer = Some(light_buffer);
+        self.light_bind_group = Some(light_bind_group);
         let planet = PlanetFaces::new_demo(1, 42);
         let planet_radius = planet.planet_radius;
         let (vertices, indices) = planet.visible_render_data();
@@ -1373,11 +1407,17 @@ impl ApplicationHandler for AppState {
                                 }
                             }
 
-                            // === Pass 1: Six-face planet with two-level frustum culling ===
+                            // === Pass 1: Six-face planet with directional light ===
                             if render_voxels
-                                && let (Some(pipeline), Some(bind_group), Some(depth_buffer)) = (
+                                && let (
+                                    Some(pipeline),
+                                    Some(cam_bg),
+                                    Some(light_bg),
+                                    Some(depth_buffer),
+                                ) = (
                                     &self.planet_pipeline,
                                     &self.planet_camera_bind_group,
+                                    &self.light_bind_group,
                                     &self.depth_buffer,
                                 )
                             {
@@ -1444,6 +1484,19 @@ impl ApplicationHandler for AppState {
                                         0,
                                         bytemuck::cast_slice(&[uniform]),
                                     );
+
+                                    // Update directional light from day/night cycle.
+                                    self.sun_light.set_direction(self.day_night.sun_direction);
+                                    self.sun_light.color = glam::Vec3::new(1.0, 0.96, 0.90);
+                                    self.sun_light.intensity = self.day_night.sun_intensity;
+                                    if let Some(lb) = &self.light_buffer {
+                                        let light_u = self.sun_light.to_uniform();
+                                        gpu.queue.write_buffer(
+                                            lb,
+                                            0,
+                                            bytemuck::cast_slice(&[light_u]),
+                                        );
+                                    }
                                 }
                                 if let Some(planet_mesh) = &self.planet_face_mesh {
                                     let pb = RenderPassBuilder::new()
@@ -1452,7 +1505,13 @@ impl ApplicationHandler for AppState {
                                         .label("planet-six-face-pass");
                                     {
                                         let mut pass = frame_encoder.begin_render_pass(&pb);
-                                        draw_unlit(&mut pass, pipeline, bind_group, planet_mesh);
+                                        draw_lit(
+                                            &mut pass,
+                                            pipeline,
+                                            cam_bg,
+                                            light_bg,
+                                            planet_mesh,
+                                        );
                                     }
                                 }
                             }
@@ -1777,91 +1836,6 @@ where
     }));
 
     event_loop.run_app(&mut app).expect("Event loop failed");
-}
-
-/// Create a no-cull unlit pipeline for planet terrain rendering.
-///
-/// Identical to [`UnlitPipeline`] but with `cull_mode: None` so that
-/// cubesphere-displaced triangles render regardless of winding order.
-fn create_no_cull_pipeline(
-    device: &wgpu::Device,
-    shader: &wgpu::ShaderModule,
-    surface_format: wgpu::TextureFormat,
-    depth_format: Option<wgpu::TextureFormat>,
-) -> UnlitPipeline {
-    use std::num::NonZeroU64;
-
-    let camera_bind_group_layout =
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("planet-camera-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(64),
-                },
-                count: None,
-            }],
-        });
-
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("planet-pipeline-layout"),
-        bind_group_layouts: &[&camera_bind_group_layout],
-        immediate_size: 0,
-    });
-
-    let depth_stencil = depth_format.map(|format| wgpu::DepthStencilState {
-        format,
-        depth_write_enabled: true,
-        depth_compare: wgpu::CompareFunction::GreaterEqual, // reverse-Z
-        stencil: wgpu::StencilState::default(),
-        bias: wgpu::DepthBiasState::default(),
-    });
-
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("planet-unlit-pipeline"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some("vs_main"),
-            buffers: &[VertexPositionColor::layout()],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        },
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: None, // No culling for cubesphere terrain
-            unclipped_depth: false,
-            polygon_mode: wgpu::PolygonMode::Fill,
-            conservative: false,
-        },
-        depth_stencil,
-        multisample: wgpu::MultisampleState {
-            count: 1,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: surface_format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        }),
-        multiview_mask: None,
-        cache: None,
-    });
-
-    UnlitPipeline {
-        pipeline,
-        camera_bind_group_layout,
-    }
 }
 
 /// Create six colored quad meshes, one per [`CubeFace`], arranged as a cube

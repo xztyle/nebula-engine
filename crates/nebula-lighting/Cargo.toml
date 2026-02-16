@@ -3,3 +3,7 @@ name = "nebula-lighting"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+
+[dependencies]
+bytemuck = { workspace = true }
+glam = { workspace = true }

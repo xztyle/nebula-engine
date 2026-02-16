@@ -13,3 +13,4 @@ winit = { workspace = true }
 bytemuck = { workspace = true }
 glam = { workspace = true }
 nebula-mesh = { path = "../nebula-mesh" }
+nebula-lighting = { path = "../nebula-lighting" }
