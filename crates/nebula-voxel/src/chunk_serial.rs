@@ -3,28 +3,37 @@
 //! The NVCK (Nebula Voxel Chunk) format is a compact, versioned binary format
 //! designed for disk storage, network transmission, and undo/redo snapshots.
 //!
-//! ## Binary Layout
+//! ## Binary Layout (v2, with optional RLE)
 //!
 //! | Offset | Size | Field |
 //! |--------|------|-------|
 //! | 0 | 4 | Magic bytes `[0x4E, 0x56, 0x43, 0x4B]` ("NVCK") |
-//! | 4 | 1 | Format version (`u8`, currently 1) |
-//! | 5 | 2 | Palette length (`u16`, little-endian) |
-//! | 7 | N×2 | Palette entries (N × `u16` `VoxelTypeId`, little-endian) |
-//! | 7+N×2 | 1 | Bit width (`u8`: 0, 2, 4, 8, or 16) |
-//! | 8+N×2 | M | Bit-packed voxel index data |
+//! | 4 | 1 | Format version (`u8`, currently 2) |
+//! | 5 | 1 | Compression flags (bit 0: RLE enabled) |
+//! | 6 | 2 | Palette length (`u16`, little-endian) |
+//! | 8 | N×2 | Palette entries (N × `u16` `VoxelTypeId`, little-endian) |
+//! | 8+N×2 | 1 | Bit width (`u8`: 0, 2, 4, 8, or 16) |
+//! | 9+N×2 | M | Index data (RLE or raw bit-packed) |
 //!
-//! Where M = `ceil(32768 × bit_width / 8)` bytes (0 when bit_width is 0).
+//! When RLE is enabled, index data is: run count (`u32` LE) followed by
+//! R × (`count: u16 LE`, `value: u16 LE`) pairs.
+//! When RLE is disabled, M = `ceil(32768 × bit_width / 8)` bytes.
+//!
+//! Format version 1 (legacy) is also supported for deserialization.
 
 use crate::bit_packed::BitPackedArray;
 use crate::chunk::{CHUNK_VOLUME, ChunkData};
 use crate::registry::VoxelTypeId;
+use crate::rle;
 
 /// Magic bytes identifying the NVCK format.
 const MAGIC: [u8; 4] = [0x4E, 0x56, 0x43, 0x4B];
 
-/// Current format version.
-const FORMAT_VERSION: u8 = 1;
+/// Current format version (2 = RLE support).
+const FORMAT_VERSION: u8 = 2;
+
+/// Compression flag: bit 0 indicates RLE is used.
+const FLAG_RLE: u8 = 0x01;
 
 /// Errors that can occur during chunk deserialization.
 #[derive(Debug, thiserror::Error)]
@@ -52,47 +61,101 @@ pub enum ChunkSerError {
 }
 
 impl ChunkData {
-    /// Serializes this chunk to a byte vector in the NVCK binary format.
+    /// Serializes this chunk to a byte vector in the NVCK v2 binary format.
+    ///
+    /// Adaptively chooses RLE or raw format based on which is smaller.
     pub fn serialize(&self) -> Vec<u8> {
         let palette = self.palette();
         let bit_width = self.bit_width();
-        let index_bytes = index_data_len(bit_width);
-        let total = 4 + 1 + 2 + palette.len() * 2 + 1 + index_bytes;
 
-        let mut buf = Vec::with_capacity(total);
+        // Extract indices for RLE analysis
+        let (use_rle, index_payload) = if bit_width == 0 {
+            // Uniform chunk: bit_width 0 means no index data needed
+            (false, Vec::new())
+        } else {
+            let indices = self.extract_indices();
+            let rle_runs = rle::rle_encode(&indices);
+            let rle_bytes = rle::rle_to_bytes(&rle_runs);
+            let rle_total = 4 + rle_bytes.len(); // run_count(u32) + runs
+            let raw_total = index_data_len(bit_width);
 
-        // Magic + version
+            if rle_total < raw_total {
+                // RLE is smaller: encode as run_count(u32) + runs
+                let mut payload = Vec::with_capacity(rle_total);
+                payload.extend_from_slice(&(rle_runs.len() as u32).to_le_bytes());
+                payload.extend(rle_bytes);
+                (true, payload)
+            } else {
+                // Raw is smaller: encode bit-packed words
+                let raw = self.storage().raw_data();
+                let mut payload = Vec::with_capacity(raw_total);
+                for word in raw {
+                    payload.extend_from_slice(&word.to_le_bytes());
+                }
+                payload.truncate(raw_total);
+                (false, payload)
+            }
+        };
+
+        let flags: u8 = if use_rle { FLAG_RLE } else { 0 };
+        // Header: magic(4) + version(1) + flags(1) + palette_len(2) + palette + bit_width(1)
+        let header_size = 4 + 1 + 1 + 2 + palette.len() * 2 + 1;
+        let mut buf = Vec::with_capacity(header_size + index_payload.len());
+
         buf.extend_from_slice(&MAGIC);
         buf.push(FORMAT_VERSION);
-
-        // Palette
+        buf.push(flags);
         buf.extend_from_slice(&(palette.len() as u16).to_le_bytes());
         for entry in palette {
             buf.extend_from_slice(&entry.0.to_le_bytes());
         }
-
-        // Bit width
         buf.push(bit_width);
-
-        // Index data: convert u64 words to little-endian bytes
-        if bit_width > 0 {
-            let raw = self.storage().raw_data();
-            for word in raw {
-                buf.extend_from_slice(&word.to_le_bytes());
-            }
-            // Trim to exact index_bytes (last word may be partially used)
-            buf.truncate(total);
-        }
+        buf.extend(index_payload);
 
         buf
     }
 
+    /// Returns the serialized size and whether RLE was used, for diagnostics.
+    pub fn serialize_stats(&self) -> SerializeStats {
+        let palette = self.palette();
+        let bit_width = self.bit_width();
+        let raw_size = index_data_len(bit_width);
+
+        if bit_width == 0 {
+            return SerializeStats {
+                rle_used: false,
+                palette_bytes: palette.len() * 2,
+                index_bytes: 0,
+                raw_index_bytes: 0,
+            };
+        }
+
+        let indices = self.extract_indices();
+        let rle_runs = rle::rle_encode(&indices);
+        let rle_size = 4 + rle_runs.len() * 4;
+        let use_rle = rle_size < raw_size;
+
+        SerializeStats {
+            rle_used: use_rle,
+            palette_bytes: palette.len() * 2,
+            index_bytes: if use_rle { rle_size } else { raw_size },
+            raw_index_bytes: raw_size,
+        }
+    }
+
+    /// Extracts all palette indices as a flat `Vec<u16>`.
+    fn extract_indices(&self) -> Vec<u16> {
+        let mut indices = Vec::with_capacity(CHUNK_VOLUME);
+        for i in 0..CHUNK_VOLUME {
+            indices.push(self.storage().get(i));
+        }
+        indices
+    }
+
     /// Deserializes a chunk from a byte slice in the NVCK binary format.
     ///
-    /// Returns an error if the data is corrupted, has an unrecognized version,
-    /// or is truncated.
+    /// Supports format versions 1 (no RLE) and 2 (optional RLE).
     pub fn deserialize(data: &[u8]) -> Result<Self, ChunkSerError> {
-        // Check magic bytes first (need at least 4 bytes)
         if data.len() < 4 {
             return Err(ChunkSerError::InvalidMagic);
         }
@@ -100,7 +163,6 @@ impl ChunkData {
             return Err(ChunkSerError::InvalidMagic);
         }
 
-        // Check version (need at least 5 bytes)
         if data.len() < 5 {
             return Err(ChunkSerError::Truncated {
                 expected: 5,
@@ -108,11 +170,15 @@ impl ChunkData {
             });
         }
         let version = data[4];
-        if version != FORMAT_VERSION {
-            return Err(ChunkSerError::UnsupportedVersion(version));
+        match version {
+            1 => Self::deserialize_v1(data),
+            2 => Self::deserialize_v2(data),
+            _ => Err(ChunkSerError::UnsupportedVersion(version)),
         }
+    }
 
-        // Need at least magic(4) + version(1) + palette_len(2) + bit_width(1) = 8
+    /// Deserializes format version 1 (no flags, no RLE).
+    fn deserialize_v1(data: &[u8]) -> Result<Self, ChunkSerError> {
         if data.len() < 8 {
             return Err(ChunkSerError::Truncated {
                 expected: 8,
@@ -120,10 +186,7 @@ impl ChunkData {
             });
         }
 
-        // Palette length
         let palette_len = u16::from_le_bytes([data[5], data[6]]) as usize;
-
-        // Check we have enough data for palette + bit_width byte
         let palette_end = 7 + palette_len * 2;
         let header_end = palette_end + 1;
         if data.len() < header_end {
@@ -133,52 +196,157 @@ impl ChunkData {
             });
         }
 
-        // Read palette
-        let mut palette = Vec::with_capacity(palette_len);
-        for i in 0..palette_len {
-            let offset = 7 + i * 2;
-            let id = u16::from_le_bytes([data[offset], data[offset + 1]]);
-            palette.push(VoxelTypeId(id));
-        }
-
-        // Bit width
+        let palette = read_palette(data, 7, palette_len);
         let bit_width = data[palette_end];
-        if !matches!(bit_width, 0 | 2 | 4 | 8 | 16) {
-            return Err(ChunkSerError::InvalidBitWidth(bit_width));
-        }
-
-        // Validate palette size vs bit width
+        validate_bit_width(bit_width)?;
         if palette_len == 0 {
             return Err(ChunkSerError::InvalidPaletteEntry);
         }
 
-        // Index data
-        let index_bytes = index_data_len(bit_width);
-        let total_expected = header_end + index_bytes;
-        if data.len() < total_expected {
+        let storage = read_raw_storage(data, header_end, bit_width)?;
+        Ok(ChunkData::from_raw_parts(palette, storage, bit_width))
+    }
+
+    /// Deserializes format version 2 (flags byte, optional RLE).
+    fn deserialize_v2(data: &[u8]) -> Result<Self, ChunkSerError> {
+        // v2 header: magic(4) + version(1) + flags(1) + palette_len(2) = 8 min
+        if data.len() < 8 {
             return Err(ChunkSerError::Truncated {
-                expected: total_expected,
+                expected: 8,
                 actual: data.len(),
             });
         }
 
+        let flags = data[5];
+        let use_rle = (flags & FLAG_RLE) != 0;
+        let palette_len = u16::from_le_bytes([data[6], data[7]]) as usize;
+        let palette_start = 8;
+        let palette_end = palette_start + palette_len * 2;
+        let bit_width_offset = palette_end;
+        let header_end = bit_width_offset + 1;
+
+        if data.len() < header_end {
+            return Err(ChunkSerError::Truncated {
+                expected: header_end,
+                actual: data.len(),
+            });
+        }
+
+        let palette = read_palette(data, palette_start, palette_len);
+        let bit_width = data[bit_width_offset];
+        validate_bit_width(bit_width)?;
+        if palette_len == 0 {
+            return Err(ChunkSerError::InvalidPaletteEntry);
+        }
+
         let storage = if bit_width == 0 {
             BitPackedArray::new(0, CHUNK_VOLUME)
-        } else {
-            let index_data = &data[header_end..header_end + index_bytes];
-            // Convert bytes to u64 words (little-endian)
-            let word_count = index_bytes.div_ceil(8);
-            let mut words = Vec::with_capacity(word_count);
-            for chunk in index_data.chunks(8) {
-                let mut word_bytes = [0u8; 8];
-                word_bytes[..chunk.len()].copy_from_slice(chunk);
-                words.push(u64::from_le_bytes(word_bytes));
+        } else if use_rle {
+            // Read RLE: run_count(u32) + runs
+            if data.len() < header_end + 4 {
+                return Err(ChunkSerError::Truncated {
+                    expected: header_end + 4,
+                    actual: data.len(),
+                });
             }
-            BitPackedArray::from_raw(bit_width, CHUNK_VOLUME, words)
+            let run_count = u32::from_le_bytes([
+                data[header_end],
+                data[header_end + 1],
+                data[header_end + 2],
+                data[header_end + 3],
+            ]) as usize;
+            let runs_start = header_end + 4;
+            let runs_end = runs_start + run_count * 4;
+            if data.len() < runs_end {
+                return Err(ChunkSerError::Truncated {
+                    expected: runs_end,
+                    actual: data.len(),
+                });
+            }
+            let runs = rle::rle_from_bytes(&data[runs_start..runs_end], run_count);
+            let indices = rle::rle_decode(&runs, CHUNK_VOLUME).map_err(|e| {
+                let rle::RleError::LengthMismatch { actual, .. } = e;
+                ChunkSerError::Truncated {
+                    expected: CHUNK_VOLUME,
+                    actual,
+                }
+            })?;
+            indices_to_storage(&indices, bit_width)
+        } else {
+            read_raw_storage(data, header_end, bit_width)?
         };
 
         Ok(ChunkData::from_raw_parts(palette, storage, bit_width))
     }
+}
+
+/// Diagnostics for chunk serialization.
+#[derive(Debug, Clone)]
+pub struct SerializeStats {
+    /// Whether RLE compression was used.
+    pub rle_used: bool,
+    /// Palette size in bytes.
+    pub palette_bytes: usize,
+    /// Actual index data size in bytes (RLE or raw).
+    pub index_bytes: usize,
+    /// Raw (uncompressed) index data size in bytes.
+    pub raw_index_bytes: usize,
+}
+
+/// Reads palette entries from a byte slice.
+fn read_palette(data: &[u8], start: usize, len: usize) -> Vec<VoxelTypeId> {
+    let mut palette = Vec::with_capacity(len);
+    for i in 0..len {
+        let offset = start + i * 2;
+        let id = u16::from_le_bytes([data[offset], data[offset + 1]]);
+        palette.push(VoxelTypeId(id));
+    }
+    palette
+}
+
+/// Validates that a bit width value is one of the allowed values.
+fn validate_bit_width(bit_width: u8) -> Result<(), ChunkSerError> {
+    if !matches!(bit_width, 0 | 2 | 4 | 8 | 16) {
+        return Err(ChunkSerError::InvalidBitWidth(bit_width));
+    }
+    Ok(())
+}
+
+/// Reads raw bit-packed storage from a byte slice.
+fn read_raw_storage(
+    data: &[u8],
+    start: usize,
+    bit_width: u8,
+) -> Result<BitPackedArray, ChunkSerError> {
+    if bit_width == 0 {
+        return Ok(BitPackedArray::new(0, CHUNK_VOLUME));
+    }
+    let index_bytes = index_data_len(bit_width);
+    let end = start + index_bytes;
+    if data.len() < end {
+        return Err(ChunkSerError::Truncated {
+            expected: end,
+            actual: data.len(),
+        });
+    }
+    let index_data = &data[start..end];
+    let word_count = index_bytes.div_ceil(8);
+    let mut words = Vec::with_capacity(word_count);
+    for chunk in index_data.chunks(8) {
+        let mut word_bytes = [0u8; 8];
+        word_bytes[..chunk.len()].copy_from_slice(chunk);
+        words.push(u64::from_le_bytes(word_bytes));
+    }
+    Ok(BitPackedArray::from_raw(bit_width, CHUNK_VOLUME, words))
+}
+
+/// Converts a flat index array to a `BitPackedArray`.
+fn indices_to_storage(indices: &[u16], bit_width: u8) -> BitPackedArray {
+    let mut storage = BitPackedArray::new(bit_width, indices.len());
+    for (i, &val) in indices.iter().enumerate() {
+        storage.set(i, val);
+    }
+    storage
 }
 
 /// Returns the number of bytes needed for the bit-packed index data.
@@ -276,7 +444,7 @@ mod tests {
     fn test_version_byte_present() {
         let chunk = ChunkData::new_air();
         let bytes = chunk.serialize();
-        assert_eq!(bytes[4], 1, "format version should be 1");
+        assert_eq!(bytes[4], 2, "format version should be 2");
     }
 
     #[test]
@@ -295,14 +463,14 @@ mod tests {
             "expected UnsupportedVersion(99), got {result:?}"
         );
 
-        // Truncated: valid header but missing palette data
+        // Truncated: valid v1 header but missing palette data
         let result = ChunkData::deserialize(&[0x4E, 0x56, 0x43, 0x4B, 1, 5, 0]);
         assert!(
             matches!(result, Err(ChunkSerError::Truncated { .. })),
             "expected Truncated, got {result:?}"
         );
 
-        // Invalid bit width
+        // Invalid bit width (v1 format)
         let result = ChunkData::deserialize(&[0x4E, 0x56, 0x43, 0x4B, 1, 1, 0, 0, 0, 3]);
         assert!(
             matches!(result, Err(ChunkSerError::InvalidBitWidth(3))),

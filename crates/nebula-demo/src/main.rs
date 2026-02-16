@@ -469,8 +469,19 @@ fn demonstrate_chunk_serialization() {
             }
         }
 
+        let stats = chunk.serialize_stats();
         let bytes = chunk.serialize();
         total_bytes += bytes.len();
+
+        let raw_kb = 32 * 1024; // 32KB raw uncompressed
+        info!(
+            "Chunk ({},0): RLE {} {}B, palette {}B, raw {}KB",
+            i,
+            if stats.rle_used { "on" } else { "off" },
+            stats.index_bytes,
+            stats.palette_bytes,
+            raw_kb / 1024,
+        );
 
         // Round-trip integrity check
         let restored = ChunkData::deserialize(&bytes).expect("deserialize failed");
@@ -485,7 +496,7 @@ fn demonstrate_chunk_serialization() {
 
     let avg = total_bytes / chunk_count;
     info!(
-        "Serialized {} chunks: {:.1}KB total, {}B avg",
+        "Serialized {} chunks: {:.1}KB total, {}B avg (with RLE compression)",
         chunk_count,
         total_bytes as f64 / 1024.0,
         avg,
