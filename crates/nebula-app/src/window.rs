@@ -11,7 +11,7 @@ use crate::game_loop::GameLoop;
 use bytemuck;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
-use nebula_planet::{SingleFaceLoader, build_face_render_data, create_face_camera};
+use nebula_planet::{PlanetFaces, create_orbit_camera};
 use nebula_render::{
     BufferAllocator, Camera, CameraUniform, DepthBuffer, FrameEncoder, IndexData, MeshBuffer,
     RenderContext, RenderPassBuilder, ShaderLibrary, SurfaceWrapper, TEXTURED_SHADER_SOURCE,
@@ -107,7 +107,9 @@ pub struct AppState {
     pub textured_camera_bind_group: Option<wgpu::BindGroup>,
     /// Cube-face quad meshes (six faces, each a distinct color).
     pub cube_face_meshes: Vec<MeshBuffer>,
-    /// Planet single-face terrain mesh (cubesphere-displaced).
+    /// Six-face planet renderer.
+    pub planet_faces: Option<PlanetFaces>,
+    /// Planet mesh buffer.
     pub planet_face_mesh: Option<MeshBuffer>,
     /// Camera buffer for the planet face view.
     pub planet_camera_buffer: Option<wgpu::Buffer>,
@@ -150,6 +152,7 @@ impl AppState {
             checkerboard_texture: None,
             textured_camera_bind_group: None,
             cube_face_meshes: Vec::new(),
+            planet_faces: None,
             planet_face_mesh: None,
             planet_camera_buffer: None,
             planet_camera_bind_group: None,
@@ -196,6 +199,7 @@ impl AppState {
             checkerboard_texture: None,
             textured_camera_bind_group: None,
             cube_face_meshes: Vec::new(),
+            planet_faces: None,
             planet_face_mesh: None,
             planet_camera_buffer: None,
             planet_camera_bind_group: None,
@@ -407,17 +411,14 @@ impl AppState {
         );
     }
 
-    /// Initialize planet single-face terrain rendering.
+    /// Initialize six-face planet terrain rendering.
     fn initialize_planet_face(
         &mut self,
         gpu: &RenderContext,
         allocator: &BufferAllocator,
         _unlit_pipeline: &UnlitPipeline,
     ) {
-        use nebula_cubesphere::CubeFace;
         use wgpu::util::DeviceExt;
-
-        // Create a no-cull pipeline for planet terrain (cubesphere displacement can flip winding)
         let mut shader_library = ShaderLibrary::new();
         let shader = shader_library
             .load_from_source(&gpu.device, "planet-unlit", UNLIT_SHADER_SOURCE)
@@ -428,30 +429,25 @@ impl AppState {
             gpu.surface_format,
             Some(DepthBuffer::FORMAT),
         );
-
-        let loader = SingleFaceLoader::new_demo(CubeFace::PosY, 3, 42);
-        let planet_radius = loader.planet_radius;
-        let voxel_size = loader.voxel_size;
-        let chunks = loader.load_and_mesh();
-        let render_data = build_face_render_data(&chunks, planet_radius, voxel_size);
-
-        if render_data.vertices.is_empty() {
-            info!("Planet face: no vertices generated");
+        let planet = PlanetFaces::new_demo(1, 42);
+        let planet_radius = planet.planet_radius;
+        let (vertices, indices) = planet.visible_render_data();
+        if vertices.is_empty() {
+            info!("Planet: no vertices across 6 faces");
+            self.planet_faces = Some(planet);
+            self.planet_pipeline = Some(planet_pipeline);
             return;
         }
-
         let mesh = allocator.create_mesh(
-            "planet-face",
-            bytemuck::cast_slice(&render_data.vertices),
-            IndexData::U32(&render_data.indices),
+            "planet-six-faces",
+            bytemuck::cast_slice(&vertices),
+            IndexData::U32(&indices),
         );
-
         let aspect = self.surface_width() as f32 / self.surface_height().max(1) as f32;
-        let vp = create_face_camera(CubeFace::PosY, planet_radius as f32, 30.0, aspect);
+        let vp = create_orbit_camera(planet_radius as f32, 200.0, 0.0, 0.6, aspect);
         let uniform = CameraUniform {
             view_proj: vp.to_cols_array_2d(),
         };
-
         let buffer = gpu
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -459,7 +455,6 @@ impl AppState {
                 contents: bytemuck::cast_slice(&[uniform]),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
-
         let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("planet-camera-bind-group"),
             layout: &planet_pipeline.camera_bind_group_layout,
@@ -468,13 +463,12 @@ impl AppState {
                 resource: buffer.as_entire_binding(),
             }],
         });
-
         info!(
-            "Planet face initialized: {} vertices, {} triangles",
-            render_data.vertices.len(),
-            render_data.indices.len() / 3
+            "Planet six-face: {} verts, {} tris",
+            vertices.len(),
+            indices.len() / 3
         );
-
+        self.planet_faces = Some(planet);
         self.planet_face_mesh = Some(mesh);
         self.planet_camera_buffer = Some(buffer);
         self.planet_camera_bind_group = Some(bind_group);
@@ -709,42 +703,42 @@ impl ApplicationHandler for AppState {
                                 surface_texture,
                             );
 
-                            // === Pass 1: Planet face terrain (clears to space blue) ===
-                            if let (
-                                Some(pipeline),
-                                Some(bind_group),
-                                Some(planet_mesh),
-                                Some(depth_buffer),
-                            ) = (
+                            // === Pass 1: Six-face planet with frustum culling ===
+                            if let (Some(pipeline), Some(bind_group), Some(depth_buffer)) = (
                                 &self.planet_pipeline,
                                 &self.planet_camera_bind_group,
-                                &self.planet_face_mesh,
                                 &self.depth_buffer,
                             ) {
-                                // Update planet camera to orbit above +Y face
                                 if let Some(planet_buf) = &self.planet_camera_buffer {
                                     let aspect = self.surface_width() as f32
                                         / self.surface_height().max(1) as f32;
                                     let orbit_angle = self.camera_time * 0.3;
-                                    let planet_radius = 200.0_f32;
-                                    let altitude = 80.0_f32;
-
-                                    let orbit_tilt = 0.4_f32;
-                                    let eye = glam::Vec3::new(
-                                        (orbit_angle.sin() as f32) * orbit_tilt * altitude,
-                                        planet_radius + altitude,
-                                        (orbit_angle.cos() as f32) * orbit_tilt * altitude,
-                                    );
-                                    let target = glam::Vec3::new(0.0, planet_radius, 0.0);
-                                    let up = glam::Vec3::Z;
-                                    let view = glam::Mat4::look_at_rh(eye, target, up);
-                                    let proj = glam::Mat4::perspective_rh(
-                                        70.0_f32.to_radians(),
+                                    let planet_radius = self
+                                        .planet_faces
+                                        .as_ref()
+                                        .map(|p| p.planet_radius as f32)
+                                        .unwrap_or(200.0);
+                                    let altitude = planet_radius * 0.8;
+                                    let vp = create_orbit_camera(
+                                        planet_radius,
+                                        altitude,
+                                        orbit_angle,
+                                        0.4,
                                         aspect,
-                                        0.5,
-                                        1000.0,
                                     );
-                                    let vp = proj * view;
+                                    let frustum = nebula_render::Frustum::from_view_projection(&vp);
+                                    if let Some(planet) = &mut self.planet_faces {
+                                        planet.cull_faces(&frustum);
+                                        let (verts, idxs) = planet.visible_render_data();
+                                        if !verts.is_empty() {
+                                            let alloc = BufferAllocator::new(&gpu.device);
+                                            self.planet_face_mesh = Some(alloc.create_mesh(
+                                                "planet-six-faces",
+                                                bytemuck::cast_slice(&verts),
+                                                IndexData::U32(&idxs),
+                                            ));
+                                        }
+                                    }
                                     let uniform = CameraUniform {
                                         view_proj: vp.to_cols_array_2d(),
                                     };
@@ -754,16 +748,15 @@ impl ApplicationHandler for AppState {
                                         bytemuck::cast_slice(&[uniform]),
                                     );
                                 }
-
-                                let planet_pass_builder = RenderPassBuilder::new()
-                                    .clear_color(clear_color)
-                                    .depth(depth_buffer.view.clone(), DepthBuffer::CLEAR_VALUE)
-                                    .label("planet-face-pass");
-
-                                {
-                                    let mut planet_pass =
-                                        frame_encoder.begin_render_pass(&planet_pass_builder);
-                                    draw_unlit(&mut planet_pass, pipeline, bind_group, planet_mesh);
+                                if let Some(planet_mesh) = &self.planet_face_mesh {
+                                    let pb = RenderPassBuilder::new()
+                                        .clear_color(clear_color)
+                                        .depth(depth_buffer.view.clone(), DepthBuffer::CLEAR_VALUE)
+                                        .label("planet-six-face-pass");
+                                    {
+                                        let mut pass = frame_encoder.begin_render_pass(&pb);
+                                        draw_unlit(&mut pass, pipeline, bind_group, planet_mesh);
+                                    }
                                 }
                             }
 
