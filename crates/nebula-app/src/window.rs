@@ -12,7 +12,8 @@ use bytemuck;
 use nebula_config::Config;
 use nebula_debug::{DebugServer, DebugState, create_debug_server, get_debug_port};
 use nebula_planet::{
-    AtmosphereParams, AtmosphereRenderer, LocalFrustum, PlanetFaces, create_orbit_camera,
+    AtmosphereParams, AtmosphereRenderer, DayNightState, LocalFrustum, PlanetFaces,
+    create_orbit_camera,
 };
 use nebula_render::{
     BufferAllocator, Camera, CameraUniform, DepthBuffer, FrameEncoder, IndexData, MeshBuffer,
@@ -123,6 +124,8 @@ pub struct AppState {
     pub atmosphere_renderer: Option<AtmosphereRenderer>,
     /// Atmosphere bind group (recreated on depth buffer resize).
     pub atmosphere_bind_group: Option<wgpu::BindGroup>,
+    /// Day/night cycle state (20-minute default cycle).
+    pub day_night: DayNightState,
 }
 
 impl AppState {
@@ -165,6 +168,7 @@ impl AppState {
             planet_pipeline: None,
             atmosphere_renderer: None,
             atmosphere_bind_group: None,
+            day_night: DayNightState::new(1200.0), // 20 minutes per day
         }
     }
 
@@ -214,6 +218,7 @@ impl AppState {
             planet_pipeline: None,
             atmosphere_renderer: None,
             atmosphere_bind_group: None,
+            day_night: DayNightState::new(1200.0), // 20 minutes per day
         }
     }
 
@@ -675,11 +680,13 @@ impl ApplicationHandler for AppState {
                 let camera_time = &mut self.camera_time;
                 let camera_buffer = &self.camera_buffer;
                 let gpu = &self.gpu;
+                let day_night = &mut self.day_night;
 
                 self.game_loop.tick(
                     |dt, _sim_time| {
                         *tick_count += 1;
                         *camera_time += dt;
+                        day_night.tick(dt);
 
                         // Update camera to orbit around the triangle
                         let orbit_radius = 3.0f64;
@@ -846,14 +853,8 @@ impl ApplicationHandler for AppState {
                                     (orbit_angle.sin() * 0.4_f64.cos() * cam_dist as f64) as f32,
                                 );
 
-                                // Sun direction: slowly rotating
-                                let sun_angle = self.camera_time * 0.1;
-                                let sun_dir = glam::Vec3::new(
-                                    sun_angle.cos() as f32,
-                                    0.5,
-                                    sun_angle.sin() as f32,
-                                )
-                                .normalize();
+                                // Sun direction from day/night cycle
+                                let sun_dir = self.day_night.sun_direction;
 
                                 atmo_renderer.update_uniform(
                                     &gpu.queue,
