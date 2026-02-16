@@ -19,6 +19,10 @@ pub struct PlanetUniform {
     pub sun_direction: [f32; 3],
     /// Planet radius (used for reference, baked into model matrix).
     pub planet_radius: f32,
+    /// Alpha blend factor for orbit-to-surface transition (0 = invisible, 1 = opaque).
+    pub blend_alpha: f32,
+    /// Padding to 16-byte alignment.
+    pub _padding: [f32; 3],
 }
 
 /// Compute the model matrix for the orbital sphere.
@@ -174,7 +178,7 @@ impl OrbitalPipeline {
                 entry_point: Some("fs_orbital"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
-                    blend: None, // opaque
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -289,6 +293,8 @@ impl OrbitalRenderer {
             model: Mat4::IDENTITY.to_cols_array_2d(),
             sun_direction: [0.0, 1.0, 0.0],
             planet_radius,
+            blend_alpha: 1.0,
+            _padding: [0.0; 3],
         };
         let planet_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("orbital-planet-uniform"),
@@ -345,6 +351,9 @@ impl OrbitalRenderer {
     }
 
     /// Update the camera and planet uniforms for the current frame.
+    ///
+    /// `blend_alpha` controls opacity during orbit-to-surface transition
+    /// (0.0 = fully transparent, 1.0 = fully opaque).
     pub fn update(
         &self,
         queue: &wgpu::Queue,
@@ -352,6 +361,7 @@ impl OrbitalRenderer {
         planet_center: Vec3,
         sun_direction: Vec3,
         rotation_angle: f32,
+        blend_alpha: f32,
     ) {
         use nebula_render::CameraUniform;
 
@@ -370,6 +380,8 @@ impl OrbitalRenderer {
             model: model.to_cols_array_2d(),
             sun_direction: sun_direction.normalize().to_array(),
             planet_radius: self.planet_radius,
+            blend_alpha,
+            _padding: [0.0; 3],
         };
         queue.write_buffer(
             &self.planet_uniform_buffer,

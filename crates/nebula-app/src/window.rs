@@ -1717,6 +1717,7 @@ impl ApplicationHandler for AppState {
                                     glam::Vec3::ZERO,
                                     self.day_night.sun_direction,
                                     self.orbital_rotation,
+                                    self.transition_blend,
                                 );
 
                                 let pb = if self.skybox_renderer.is_some() {

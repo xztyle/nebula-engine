@@ -9,6 +9,10 @@ struct PlanetUniform {
     model: mat4x4<f32>,
     sun_direction: vec3<f32>,
     planet_radius: f32,
+    blend_alpha: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 @group(0) @binding(0) var<uniform> camera: CameraUniform;
@@ -50,5 +54,5 @@ fn fs_orbital(in: VertexOutput) -> @location(0) vec4<f32> {
     let ambient = vec3<f32>(0.08, 0.08, 0.12);
     let lit_color = terrain_color * (ambient + ndotl * vec3<f32>(1.0, 0.98, 0.92));
 
-    return vec4<f32>(lit_color, 1.0);
+    return vec4<f32>(lit_color, planet.blend_alpha);
 }

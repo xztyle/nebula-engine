@@ -4,7 +4,9 @@
 //! and formats them as a compact string for the window title bar.
 
 use crate::ship::ShipState;
+use nebula_planet::TransitionConfig;
 use std::time::Instant;
+use tracing::info;
 
 /// HUD telemetry values computed each frame.
 #[derive(Debug, Clone)]
@@ -19,10 +21,16 @@ pub struct HudState {
     pub heading_deg: f64,
     /// Frames per second (smoothed).
     pub fps: f64,
+    /// Transition mode label (e.g. "Orbital", "Blend", "Surface").
+    pub transition_mode: &'static str,
+    /// Orbital sphere blend factor (0 = surface, 1 = orbital).
+    pub transition_blend: f32,
     /// Last frame timestamp for FPS calculation.
     last_frame: Instant,
     /// Exponential moving average of frame time.
     frame_time_ema: f64,
+    /// Previous transition mode for logging state changes.
+    prev_transition_mode: &'static str,
 }
 
 impl Default for HudState {
@@ -33,8 +41,11 @@ impl Default for HudState {
             throttle_pct: 0.0,
             heading_deg: 0.0,
             fps: 0.0,
+            transition_mode: "Orbital",
+            transition_blend: 1.0,
             last_frame: Instant::now(),
             frame_time_ema: 1.0 / 60.0,
+            prev_transition_mode: "Orbital",
         }
     }
 }
@@ -82,6 +93,30 @@ pub fn update_hud(
         hud.frame_time_ema = hud.frame_time_ema * 0.9 + dt * 0.1;
         hud.fps = 1.0 / hud.frame_time_ema;
     }
+
+    // Transition state from altitude
+    let transition = TransitionConfig::default();
+    let (_mode, blend) = transition.classify(hud.altitude_m);
+    hud.transition_blend = blend;
+    hud.transition_mode = if blend >= 1.0 {
+        "Orbital"
+    } else if blend <= 0.0 {
+        "Surface"
+    } else {
+        "Blend"
+    };
+
+    // Log transition state changes
+    if hud.transition_mode != hud.prev_transition_mode {
+        info!(
+            "Transition: {} -> {} (alt={:.1}km, blend={:.2})",
+            hud.prev_transition_mode,
+            hud.transition_mode,
+            hud.altitude_m / 1000.0,
+            blend,
+        );
+        hud.prev_transition_mode = hud.transition_mode;
+    }
 }
 
 /// Format HUD values as a compact string suitable for a window title.
@@ -97,8 +132,11 @@ pub fn format_hud(hud: &HudState) -> String {
     // Format speed with comma separator for thousands
     let speed_str = format_with_commas(speed as u64);
 
+    let transition = hud.transition_mode;
+    let blend_pct = hud.transition_blend * 100.0;
+
     format!(
-        "SPD: {} m/s | ALT: {:.1} km | THR: {:.0}% | HDG: {:03.0}\u{00b0} | FPS: {:.0}",
+        "SPD: {} m/s | ALT: {:.1} km | THR: {:.0}% | HDG: {:03.0}\u{00b0} | {transition}({blend_pct:.0}%) | FPS: {:.0}",
         speed_str, alt_km, throttle, heading, fps,
     )
 }
@@ -196,6 +234,8 @@ mod tests {
             throttle_pct: 75.0,
             heading_deg: 45.0,
             fps: 144.0,
+            transition_mode: "Orbital",
+            transition_blend: 1.0,
             ..HudState::default()
         };
         let s = format_hud(&hud);
@@ -203,6 +243,7 @@ mod tests {
         assert!(s.contains("ALT: 402.3 km"));
         assert!(s.contains("THR: 75%"));
         assert!(s.contains("HDG: 045°"));
+        assert!(s.contains("Orbital(100%)"));
         assert!(s.contains("FPS: 144"));
     }
 }
