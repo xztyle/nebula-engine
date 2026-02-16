@@ -49,8 +49,8 @@ pub fn configure_stream(stream: &TcpStream, config: &SocketConfig) -> std::io::R
             .with_time(config.keepalive_idle)
             .with_interval(config.keepalive_interval);
 
-        // Retries are supported on Linux and Windows but not macOS.
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        // Retries are supported on Linux and macOS but not Windows.
+        #[cfg(not(target_os = "windows"))]
         let keepalive = keepalive.with_retries(config.keepalive_retries);
 
         sock_ref.set_tcp_keepalive(&keepalive)?;
