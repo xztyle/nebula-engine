@@ -1307,6 +1307,165 @@ fn demonstrate_mesh_invalidation() -> (usize, usize, usize) {
     )
 }
 
+/// Demonstrates the biome system: registry, Whittaker diagram, and noise sampling.
+fn demonstrate_biome_system() -> usize {
+    use nebula_terrain::{
+        BiomeDef, BiomeRegistry, BiomeSampler, WhittakerDiagram, WhittakerRegion,
+    };
+
+    info!("Starting biome system demonstration");
+
+    let mut registry = BiomeRegistry::new();
+
+    let tundra = registry
+        .register(BiomeDef {
+            name: "tundra".into(),
+            surface_voxel: VoxelTypeId(10),
+            subsurface_voxel: VoxelTypeId(11),
+            vegetation_density: 0.02,
+            tree_type: None,
+        })
+        .unwrap();
+
+    let desert = registry
+        .register(BiomeDef {
+            name: "desert".into(),
+            surface_voxel: VoxelTypeId(20),
+            subsurface_voxel: VoxelTypeId(21),
+            vegetation_density: 0.01,
+            tree_type: None,
+        })
+        .unwrap();
+
+    let plains = registry
+        .register(BiomeDef {
+            name: "plains".into(),
+            surface_voxel: VoxelTypeId(30),
+            subsurface_voxel: VoxelTypeId(31),
+            vegetation_density: 0.3,
+            tree_type: Some("oak".into()),
+        })
+        .unwrap();
+
+    let forest = registry
+        .register(BiomeDef {
+            name: "forest".into(),
+            surface_voxel: VoxelTypeId(40),
+            subsurface_voxel: VoxelTypeId(41),
+            vegetation_density: 0.8,
+            tree_type: Some("birch".into()),
+        })
+        .unwrap();
+
+    let tropical = registry
+        .register(BiomeDef {
+            name: "tropical_rainforest".into(),
+            surface_voxel: VoxelTypeId(50),
+            subsurface_voxel: VoxelTypeId(51),
+            vegetation_density: 0.95,
+            tree_type: Some("palm".into()),
+        })
+        .unwrap();
+
+    let diagram = WhittakerDiagram {
+        regions: vec![
+            WhittakerRegion {
+                temp_min: 0.0,
+                temp_max: 0.2,
+                moisture_min: 0.0,
+                moisture_max: 0.5,
+                biome_id: tundra,
+            },
+            WhittakerRegion {
+                temp_min: 0.0,
+                temp_max: 0.2,
+                moisture_min: 0.5,
+                moisture_max: 1.0,
+                biome_id: tundra,
+            },
+            WhittakerRegion {
+                temp_min: 0.5,
+                temp_max: 1.0,
+                moisture_min: 0.0,
+                moisture_max: 0.2,
+                biome_id: desert,
+            },
+            WhittakerRegion {
+                temp_min: 0.5,
+                temp_max: 0.8,
+                moisture_min: 0.2,
+                moisture_max: 0.5,
+                biome_id: plains,
+            },
+            WhittakerRegion {
+                temp_min: 0.2,
+                temp_max: 0.5,
+                moisture_min: 0.2,
+                moisture_max: 0.6,
+                biome_id: plains,
+            },
+            WhittakerRegion {
+                temp_min: 0.2,
+                temp_max: 0.5,
+                moisture_min: 0.6,
+                moisture_max: 1.0,
+                biome_id: forest,
+            },
+            WhittakerRegion {
+                temp_min: 0.8,
+                temp_max: 1.0,
+                moisture_min: 0.5,
+                moisture_max: 1.0,
+                biome_id: tropical,
+            },
+            WhittakerRegion {
+                temp_min: 0.2,
+                temp_max: 0.5,
+                moisture_min: 0.0,
+                moisture_max: 0.2,
+                biome_id: plains,
+            },
+            WhittakerRegion {
+                temp_min: 0.5,
+                temp_max: 0.8,
+                moisture_min: 0.5,
+                moisture_max: 1.0,
+                biome_id: forest,
+            },
+        ],
+        fallback: plains,
+    };
+
+    let biome_count = registry.len();
+
+    let sampler = BiomeSampler::new(42, diagram);
+
+    // Sample a few points to demonstrate
+    let test_points = [
+        glam::DVec3::new(1000.0, 0.0, 0.0),
+        glam::DVec3::new(0.0, 1000.0, 0.0),
+        glam::DVec3::new(0.0, 0.0, 1000.0),
+        glam::DVec3::new(500.0, 500.0, 500.0),
+    ];
+
+    for (i, point) in test_points.iter().enumerate() {
+        let (biome_id, temp, moisture) = sampler.sample(*point);
+        let def = registry.get(biome_id);
+        info!(
+            "  Point {}: biome={}, temp={:.3}, moisture={:.3}",
+            i, def.name, temp, moisture
+        );
+    }
+
+    info!(
+        "Biomes: {} registered, sampling Whittaker diagram",
+        biome_count
+    );
+
+    info!("Biome system demonstration completed successfully");
+    biome_count
+}
+
 /// Demonstrates multi-octave noise heightmap generation.
 fn demonstrate_heightmap() -> (f64, f64) {
     use nebula_terrain::{HeightmapParams, HeightmapSampler};
@@ -1468,6 +1627,9 @@ fn main() {
 
     // Demonstrate multi-octave noise heightmap
     let (_hmap_min, _hmap_max) = demonstrate_heightmap();
+
+    // Demonstrate biome system
+    let biome_count = demonstrate_biome_system();
 
     // Initialize ECS world and schedules with stage execution logging
     let mut ecs_world = nebula_ecs::create_world();
@@ -1660,7 +1822,7 @@ fn main() {
         async_quads,
     );
     config.window.title = format!(
-        "{} - Invalidation: int={}/bnd={}/crn={} - CubeDisp: {}v [{:.0},{:.0}] - Entities: {}",
+        "{} - Invalidation: int={}/bnd={}/crn={} - CubeDisp: {}v [{:.0},{:.0}] - Biomes: {} - Entities: {}",
         config.window.title,
         inv_interior,
         inv_boundary,
@@ -1668,6 +1830,7 @@ fn main() {
         disp_verts,
         disp_min,
         disp_max,
+        biome_count,
         entity_count,
     );
 

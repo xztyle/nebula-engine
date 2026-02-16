@@ -7,3 +7,6 @@ license.workspace = true
 [dependencies]
 noise = "0.9"
 glam = { workspace = true }
+nebula-voxel = { path = "../nebula-voxel" }
+hashbrown = "0.15"
+thiserror = { workspace = true }

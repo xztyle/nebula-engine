@@ -2,4 +2,10 @@
 
 mod heightmap;
 
+pub mod biome;
+
+pub use biome::{
+    BiomeDef, BiomeId, BiomeRegistry, BiomeRegistryError, BiomeSampler, WhittakerDiagram,
+    WhittakerRegion,
+};
 pub use heightmap::{HeightmapParams, HeightmapSampler};
