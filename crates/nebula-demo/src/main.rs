@@ -3603,6 +3603,83 @@ fn demonstrate_client_side_prediction() {
     info!("Client-side prediction demonstration completed successfully");
 }
 
+/// Demonstrates server reconciliation: correcting client prediction when
+/// the server's authoritative state diverges.
+fn demonstrate_server_reconciliation() {
+    use nebula_multiplayer::{
+        AuthoritativePlayerState, ClientIntent, CorrectionSmoothing, InputBuffer, PredictionState,
+        client_prediction_step, reconcile,
+    };
+
+    info!("Starting server reconciliation demonstration");
+
+    // Build a prediction buffer with 5 ticks of movement
+    let mut buffer = InputBuffer::new(128);
+    let mut current = PredictionState {
+        x: 0,
+        y: 0,
+        z: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        tick: 0,
+    };
+
+    for tick in 1..=5 {
+        let intent = ClientIntent::Move {
+            player_id: 1,
+            dx: 100,
+            dy: 0,
+            dz: 50,
+        };
+        current = client_prediction_step(&current, tick, intent, &mut buffer);
+    }
+    info!(
+        "Predicted state after 5 ticks: ({}, {}, {})",
+        current.x, current.y, current.z
+    );
+
+    // Simulate a small server correction at tick 3 (server says x was 250, not 300)
+    let server_state = AuthoritativePlayerState {
+        tick: 3,
+        x: 250,
+        y: 0,
+        z: 150,
+        vx: 100,
+        vy: 0,
+        vz: 50,
+    };
+
+    let result = reconcile(&server_state, &mut buffer);
+    info!(
+        "After reconciliation (small correction): corrected={}, pos=({}, {}, {})",
+        result.corrected, result.x, result.y, result.z
+    );
+
+    // Visual smoothing for the small correction
+    let mut smoothing = CorrectionSmoothing::default();
+    if result.corrected {
+        let dx = result.x - current.x;
+        let dy = result.y - current.y;
+        let dz = result.z - current.z;
+        smoothing.apply_correction(dx, dy, dz);
+        info!(
+            "Visual offset after small correction: ({:.1}, {:.1}, {:.1})",
+            smoothing.visual_offset_x, smoothing.visual_offset_y, smoothing.visual_offset_z
+        );
+        // Simulate a few frames of decay
+        for _ in 0..5 {
+            smoothing.update(1.0 / 60.0);
+        }
+        info!(
+            "Visual offset after 5 frames decay: ({:.1}, {:.1}, {:.1})",
+            smoothing.visual_offset_x, smoothing.visual_offset_y, smoothing.visual_offset_z
+        );
+    }
+
+    info!("Server reconciliation demonstration completed successfully");
+}
+
 fn main() {
     let args = CliArgs::parse();
 
@@ -4150,6 +4227,9 @@ fn main() {
 
     // Demonstrate client-side prediction
     demonstrate_client_side_prediction();
+
+    // Demonstrate server reconciliation
+    demonstrate_server_reconciliation();
 
     // Input context stack: gameplay context is the default.
     let gameplay_ctx = nebula_input::InputContext {
