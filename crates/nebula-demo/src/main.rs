@@ -2874,9 +2874,12 @@ fn main() {
         demo_state.spatial_hash.count()
     );
 
-    // Camera yaw/pitch for mouse look (radians).
-    let mut yaw: f32 = 0.0;
-    let mut pitch: f32 = 0.0;
+    // First-person camera controller (replaces manual yaw/pitch).
+    let mut fps_camera = nebula_player::FirstPersonCamera {
+        move_speed: 5_000, // 5 m/tick in mm
+        ..Default::default()
+    };
+    let mut cam_rotation = nebula_ecs::Rotation::default();
 
     // Gamepad manager for controller input.
     let mut gamepad_mgr = nebula_input::GamepadManager::new();
@@ -2931,49 +2934,35 @@ fn main() {
             .and_then(|id| gamepad_mgr.gamepad(id));
         context_stack.resolve(kb, ms, gamepad, &mut action_state);
 
-        // Mouse look: apply mouse delta to yaw/pitch.
-        let sensitivity = 0.003_f32;
-        let delta = ms.delta();
-        yaw -= delta.x * sensitivity;
-        pitch -= delta.y * sensitivity;
+        // First-person look: mouse delta → yaw/pitch → rotation quaternion.
+        nebula_player::first_person_look_system(ms, &mut fps_camera, &mut cam_rotation);
 
         // Gamepad right stick rotates view.
         let stick_sensitivity = 2.0_f32; // radians per second at full tilt
         if let Some(gp) = gamepad {
             let rs = gp.right_stick();
-            yaw -= rs.x * stick_sensitivity * dt as f32;
-            pitch -= rs.y * stick_sensitivity * dt as f32;
+            fps_camera.yaw += rs.x * stick_sensitivity * dt as f32;
+            fps_camera.pitch -= rs.y * stick_sensitivity * dt as f32;
+            fps_camera.pitch = fps_camera
+                .pitch
+                .clamp(-fps_camera.pitch_limit, fps_camera.pitch_limit);
+            cam_rotation.0 = fps_camera.rotation();
         }
 
-        // Clamp pitch to avoid gimbal lock.
-        pitch = pitch.clamp(
-            -std::f32::consts::FRAC_PI_2 + 0.01,
-            std::f32::consts::FRAC_PI_2 - 0.01,
-        );
-
         tracing::trace!(
-            "mouse delta=({:.1},{:.1}) yaw={yaw:.3} pitch={pitch:.3}",
-            delta.x,
-            delta.y
+            "mouse delta=({:.1},{:.1}) yaw={:.3} pitch={:.3}",
+            ms.delta().x,
+            ms.delta().y,
+            fps_camera.yaw,
+            fps_camera.pitch,
         );
 
-        // Camera movement via action queries (5 m/s = 5_000 mm/s).
-        let speed: i128 = 5_000;
-        let dt_f = dt;
-
-        // Forward/back (action value is analog: 1.0 for key, 0..1 for stick).
-        let fwd = action_state.action_value(nebula_input::Action::MoveForward);
-        let back = action_state.action_value(nebula_input::Action::MoveBack);
-        let left = action_state.action_value(nebula_input::Action::MoveLeft);
-        let right = action_state.action_value(nebula_input::Action::MoveRight);
-
-        let net_z = back - fwd; // positive Z = backward
-        let net_x = right - left;
-
-        let dist_z = (speed as f64 * dt_f * net_z as f64) as i128;
-        let dist_x = (speed as f64 * dt_f * net_x as f64) as i128;
-        demo_state.position.z += dist_z;
-        demo_state.position.x += dist_x;
+        // Camera movement via first-person move system (WASD relative to facing).
+        {
+            let mut world_pos = nebula_ecs::WorldPos(demo_state.position);
+            nebula_player::first_person_move_system(kb, &fps_camera, &cam_rotation, &mut world_pos);
+            demo_state.position = world_pos.0;
+        }
 
         // Sprint modifier.
         if action_state.is_action_active(nebula_input::Action::Sprint) {

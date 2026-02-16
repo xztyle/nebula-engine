@@ -3,3 +3,11 @@ name = "nebula-player"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+
+[dependencies]
+bevy_ecs = { workspace = true }
+glam = { workspace = true }
+winit = { workspace = true }
+nebula-math = { path = "../nebula-math" }
+nebula-ecs = { path = "../nebula-ecs" }
+nebula-input = { path = "../nebula-input" }

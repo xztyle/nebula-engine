@@ -30,3 +30,4 @@ nebula-lod = { path = "../nebula-lod" }
 nebula-planet = { path = "../nebula-planet" }
 bevy_ecs = { workspace = true }
 hashbrown = "0.15"
+nebula-player = { path = "../nebula-player" }
