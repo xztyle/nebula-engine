@@ -495,7 +495,7 @@ fn demonstrate_chunk_serialization() {
 }
 
 /// Demonstrates the chunk manager by loading a 5x5 grid of chunks.
-fn demonstrate_chunk_manager() -> usize {
+fn demonstrate_chunk_manager() -> (usize, usize) {
     info!("Starting chunk manager demonstration");
 
     let mut manager = ChunkManager::new();
@@ -511,6 +511,10 @@ fn demonstrate_chunk_manager() -> usize {
                     chunk.set(x, 0, z, stone);
                 }
             }
+            // Clear dirty flags to simulate "already meshed" state.
+            chunk.clear_dirty(
+                nebula_voxel::MESH_DIRTY | nebula_voxel::SAVE_DIRTY | nebula_voxel::NETWORK_DIRTY,
+            );
             manager.load_chunk(ChunkAddress::new(cx, 0, cz, 0), chunk);
         }
     }
@@ -518,9 +522,17 @@ fn demonstrate_chunk_manager() -> usize {
     let count = manager.loaded_count();
     info!("Chunk manager: {} chunks loaded (5x5 grid)", count);
 
+    // Modify one voxel in a single chunk to demonstrate dirty tracking.
+    let target = ChunkAddress::new(2, 0, 2, 0);
+    if let Some(c) = manager.get_chunk_mut(&target) {
+        c.set(0, 1, 0, VoxelTypeId(2));
+    }
+
+    let dirty_count = manager.iter_dirty(nebula_voxel::MESH_DIRTY).count();
+    info!("Dirty chunks: {}/{}", dirty_count, count);
+
     // Verify a specific chunk is accessible.
-    let center = ChunkAddress::new(2, 0, 2, 0);
-    if let Some(c) = manager.get_chunk(&center) {
+    if let Some(c) = manager.get_chunk(&target) {
         info!(
             "  Center chunk (2,0,2): palette={}, version={}",
             c.palette_len(),
@@ -538,7 +550,7 @@ fn demonstrate_chunk_manager() -> usize {
     );
 
     info!("Chunk manager demonstration completed successfully");
-    count
+    (count, dirty_count)
 }
 
 fn main() {
@@ -602,7 +614,7 @@ fn main() {
     demonstrate_chunk_serialization();
 
     // Demonstrate chunk manager
-    let chunks_loaded = demonstrate_chunk_manager();
+    let (chunks_loaded, dirty_count) = demonstrate_chunk_manager();
 
     // Log initial state
     let mut demo_state = DemoState::new();
@@ -611,8 +623,14 @@ fn main() {
     // Update window title to show planet info and nearby count
     let terra = PlanetDef::earth_like("Terra", WorldPosition::default(), 42);
     config.window.title = format!(
-        "Nebula Engine - Planet: {}, radius={} mm - Registry: {} types - Chunks loaded: {} - Nearby: {} entities",
-        terra.name, terra.radius, voxel_type_count, chunks_loaded, demo_state.nearby_count
+        "Nebula Engine - Planet: {}, radius={} mm - Registry: {} types - Chunks loaded: {} - Dirty chunks: {}/{} - Nearby: {} entities",
+        terra.name,
+        terra.radius,
+        voxel_type_count,
+        chunks_loaded,
+        dirty_count,
+        chunks_loaded,
+        demo_state.nearby_count
     );
 
     info!(

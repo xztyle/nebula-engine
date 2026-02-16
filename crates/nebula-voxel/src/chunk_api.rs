@@ -88,6 +88,16 @@ impl Chunk {
         self.dirty
     }
 
+    /// Returns `true` if the specified dirty flag (or combination) is set.
+    pub fn is_dirty(&self, flag: u8) -> bool {
+        self.dirty & flag == flag
+    }
+
+    /// Mark specific dirty flags.
+    pub fn mark_dirty(&mut self, flags: u8) {
+        self.dirty |= flags;
+    }
+
     /// Clears the specified dirty flag bits.
     pub fn clear_dirty(&mut self, flags: u8) {
         self.dirty &= !flags;
@@ -236,6 +246,33 @@ mod tests {
 
         chunk.set(1, 0, 0, VoxelTypeId(2));
         assert_eq!(chunk.version(), 2);
+    }
+
+    #[test]
+    fn test_new_chunk_is_not_dirty() {
+        let chunk = Chunk::new();
+        assert!(!chunk.is_dirty(MESH_DIRTY));
+        assert!(!chunk.is_dirty(SAVE_DIRTY));
+        assert!(!chunk.is_dirty(NETWORK_DIRTY));
+    }
+
+    #[test]
+    fn test_set_voxel_marks_all_flags() {
+        let mut chunk = Chunk::new();
+        chunk.set(0, 0, 0, VoxelTypeId(1));
+        assert!(chunk.is_dirty(MESH_DIRTY));
+        assert!(chunk.is_dirty(SAVE_DIRTY));
+        assert!(chunk.is_dirty(NETWORK_DIRTY));
+    }
+
+    #[test]
+    fn test_clear_one_flag_preserves_others() {
+        let mut chunk = Chunk::new();
+        chunk.set(0, 0, 0, VoxelTypeId(1));
+        chunk.clear_dirty(MESH_DIRTY);
+        assert!(!chunk.is_dirty(MESH_DIRTY));
+        assert!(chunk.is_dirty(SAVE_DIRTY));
+        assert!(chunk.is_dirty(NETWORK_DIRTY));
     }
 
     #[test]

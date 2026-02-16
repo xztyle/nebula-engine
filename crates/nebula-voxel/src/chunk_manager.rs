@@ -94,6 +94,26 @@ impl ChunkManager {
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&ChunkAddress, &mut Chunk)> {
         self.chunks.iter_mut()
     }
+
+    /// Iterates over addresses of chunks that have the given dirty flag set.
+    pub fn iter_dirty(&self, flag: u8) -> impl Iterator<Item = &ChunkAddress> {
+        self.chunks
+            .iter()
+            .filter(move |(_, chunk)| chunk.is_dirty(flag))
+            .map(|(addr, _)| addr)
+    }
+
+    /// Iterates over mutable references to chunks with the given dirty flag.
+    ///
+    /// Useful for clearing flags after processing.
+    pub fn iter_dirty_mut(
+        &mut self,
+        flag: u8,
+    ) -> impl Iterator<Item = (&ChunkAddress, &mut Chunk)> {
+        self.chunks
+            .iter_mut()
+            .filter(move |(_, chunk)| chunk.is_dirty(flag))
+    }
 }
 
 impl Default for ChunkManager {
@@ -156,6 +176,32 @@ mod tests {
         // Unloading non-existent address doesn't change count.
         mgr.unload_chunk(addr(99, 99, 99));
         assert_eq!(mgr.loaded_count(), 2);
+    }
+
+    #[test]
+    fn test_iter_dirty_returns_only_dirty_chunks() {
+        use crate::chunk_api::MESH_DIRTY;
+
+        let mut mgr = ChunkManager::new();
+        let a1 = addr(0, 0, 0);
+        let a2 = addr(1, 0, 0);
+        let a3 = addr(2, 0, 0);
+
+        let mut c1 = Chunk::new();
+        c1.set(0, 0, 0, VoxelTypeId(1)); // dirty
+        let c2 = Chunk::new(); // clean
+        let mut c3 = Chunk::new();
+        c3.set(1, 1, 1, VoxelTypeId(2)); // dirty
+
+        mgr.load_chunk(a1, c1);
+        mgr.load_chunk(a2, c2);
+        mgr.load_chunk(a3, c3);
+
+        let dirty: Vec<_> = mgr.iter_dirty(MESH_DIRTY).copied().collect();
+        assert_eq!(dirty.len(), 2);
+        assert!(dirty.contains(&a1));
+        assert!(dirty.contains(&a3));
+        assert!(!dirty.contains(&a2));
     }
 
     #[test]
